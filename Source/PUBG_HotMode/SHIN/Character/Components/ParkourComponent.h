@@ -32,13 +32,24 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category="Parkour|Animation")
 	void EndParkour();
+	
+	// 파쿠르 시작 요청 (클라이언트 -> 서버)
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_StartParkour(EParkourState NewState, FVector NetTargetLocation);
+
+	// 파쿠르 종료 요청 (클라이언트 -> 서버)
+	UFUNCTION(Server, Reliable)
+	void Server_EndParkour();
+
+	// 애니메이션 실행 (서버 -> 모든 클라이언트)
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayParkourMontage(EParkourState State);
+	
+	// 유틸리티: "Body" 메쉬를 안전하게 찾아주는 함수
+	USkeletalMeshComponent* GetBodyMesh() const;
 
 private:
 	bool DetectObstacle(FHitResult& OutHit, float& OutHeight, bool& bOutThinObstacle, FVector& OutTopLocation) const;
-	void DecideAndStart(const FHitResult& Hit, float Height, bool bIsThin, const FVector& TopLocation);
-
-	void StartHurdle(const FHitResult& Hit);
-	void StartClimb(const FHitResult& Hit, const FVector& TopLocation);
 
 private:
 	UPROPERTY()
@@ -56,8 +67,10 @@ private:
 	UPROPERTY(EditAnywhere, Category="Parkour")
 	float ClimbThreshold = 200.f;
 	
-	UPROPERTY()
+	UPROPERTY(Replicated)
 	FVector TargetLocation;
+	UPROPERTY(Replicated)
+	EParkourState ParkourState = EParkourState::None;
 
 	UPROPERTY(EditAnywhere, Category="Parkour|Animation")
 	class UAnimMontage* HurdleMontage;
@@ -65,5 +78,5 @@ private:
 	UPROPERTY(EditAnywhere, Category="Parkour|Animation")
 	class UAnimMontage* ClimbMontage;
 
-	EParkourState ParkourState = EParkourState::None;
+
 };

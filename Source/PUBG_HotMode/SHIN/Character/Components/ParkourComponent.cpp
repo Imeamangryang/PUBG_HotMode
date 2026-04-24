@@ -5,10 +5,20 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Net/UnrealNetwork.h"
 
 UParkourComponent::UParkourComponent()
 {
     PrimaryComponentTick.bCanEverTick = false;
+    SetIsReplicatedByDefault(true);
+}
+
+void UParkourComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+    Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+    
+    DOREPLIFETIME(UParkourComponent, ParkourState);
+    DOREPLIFETIME(UParkourComponent, TargetLocation);
 }
 
 void UParkourComponent::BeginPlay()
@@ -24,20 +34,43 @@ void UParkourComponent::BeginPlay()
 
 void UParkourComponent::TryParkour()
 {
-    UE_LOG(LogTemp, Warning, TEXT("TryParkour Called"));
-
-    if (ParkourState != EParkourState::None) return;
-    if (!OwnerCharacter) return;
+    if (ParkourState != EParkourState::None || !OwnerCharacter) return;
 
     FHitResult Hit;
     float Height;
     bool bIsThin;
     FVector TopLocation;
 
+    // 1. 장애물 감지
     if (DetectObstacle(Hit, Height, bIsThin, TopLocation))
     {
-        DecideAndStart(Hit, Height, bIsThin, TopLocation);
+        EParkourState DesiredState = EParkourState::None;
+        FVector CalculatedTarget = FVector::ZeroVector;
+
+        // [Logic] DecideAndStart의 내용을 여기서 판단
+        if (Height >= HurdleThreshold)
+        {
+            // 높은 벽 -> 클라임
+            DesiredState = EParkourState::Climb;
+            FVector TempTarget = Hit.ImpactPoint;
+            TempTarget.Z = TopLocation.Z + 50.f;
+            CalculatedTarget = TempTarget + (OwnerCharacter->GetActorForwardVector() * 60.f);
+        }
+        else if (Height < HurdleThreshold && bIsThin)
+        {
+            // 낮고 얇은 벽 -> 허들
+            DesiredState = EParkourState::Hurdle;
+            CalculatedTarget = Hit.ImpactPoint + (OwnerCharacter->GetActorForwardVector() * 80.f);
+        }
+
+        // 2. 파쿠르 조건이 맞으면 서버에 RPC 요청
+        if (DesiredState != EParkourState::None)
+        {
+            Server_StartParkour(DesiredState, CalculatedTarget);
+            return; // 파쿠르 실행 시 함수 종료
+        }
     }
+    OwnerCharacter->Jump();
 }
 
 bool UParkourComponent::DetectObstacle(FHitResult& OutHit, float& OutHeight, bool& bOutThinObstacle, FVector& TopLocation) const
@@ -116,129 +149,77 @@ bool UParkourComponent::DetectObstacle(FHitResult& OutHit, float& OutHeight, boo
     return true;
 }
 
-void UParkourComponent::DecideAndStart(const FHitResult& Hit, float Height, bool bIsThin, const FVector& TopLocation)
-{
-    if (Height < HurdleThreshold)
-    {
-        // 낮은데 얇기까지 하면 허들 실행
-        if (bIsThin)
-        {
-            StartHurdle(Hit);
-        }
-        else
-        {
-            // 낮지만 두꺼운 경우: 그냥 벽에 막힌 상태 -> 점프 실행
-            UE_LOG(LogTemp, Warning, TEXT("Low but Thick -> No Parkour"));
-        }
-    }
-    // 2. 높이가 높은 경우 (클라임 범위)
-    else
-    {
-        // 클라임은 두께와 상관없이 높이만 되면 실행
-        StartClimb(Hit, TopLocation);
-    }
-}
-
-void UParkourComponent::StartHurdle(const FHitResult& Hit)
-{
-    if (!Movement || !HurdleMontage) return;
-
-    USkeletalMeshComponent* BodyMesh = Cast<USkeletalMeshComponent>(
-        OwnerCharacter->GetDefaultSubobjectByName(TEXT("Body"))
-    );
-
-    if (!BodyMesh) return;
-
-    UE_LOG(LogTemp, Warning, TEXT("Start Hurdle"));
-
-    ParkourState = EParkourState::Hurdle;
-
-    Movement->DisableMovement();
-    OwnerCharacter->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-    // 🔥 목표 위치 계산 (장애물 "뒤쪽"으로 이동)
-    FVector Forward = OwnerCharacter->GetActorForwardVector();
-
-    TargetLocation = Hit.ImpactPoint
-        + Forward * 80.f   // 장애물 넘어가기
-        + FVector(0, 0, 30.f); // 살짝 띄우기
-
-    BodyMesh->GetAnimInstance()->Montage_Play(HurdleMontage);
-}
-
-void UParkourComponent::StartClimb(const FHitResult& Hit, const FVector& TopLocation)
-{
-    if (!Movement || !ClimbMontage) return;
-
-    USkeletalMeshComponent* BodyMesh = Cast<USkeletalMeshComponent>(
-        OwnerCharacter->GetDefaultSubobjectByName(TEXT("Body"))
-    );
-
-    if (!BodyMesh) return;
-
-    UE_LOG(LogTemp, Warning, TEXT("Start Climb"));
-
-    ParkourState = EParkourState::Climb;
-
-    Movement->DisableMovement();
-    OwnerCharacter->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-    FVector Forward = OwnerCharacter->GetActorForwardVector();
-
-    // 🔥 XY는 벽 위치 기준
-    FVector Target = Hit.ImpactPoint;
-
-    // 🔥 Z는 정확한 Top 높이 사용
-    Target.Z = TopLocation.Z;
-    
-    Target.Z += 50;
-
-    // 살짝 앞으로
-    Target += Forward * 60.f;
-
-    TargetLocation = Target;
-
-    BodyMesh->GetAnimInstance()->Montage_Play(ClimbMontage);
-}
-
 void UParkourComponent::EndParkour()
+{
+    // 로컬 클라이언트에서만 서버에 종료 요청 (중복 호출 방지)
+    if (OwnerCharacter && OwnerCharacter->IsLocallyControlled())
+    {
+        Server_EndParkour();
+
+        // 카메라 랙 (로컬 전용)
+        if (USpringArmComponent* SpringArm = OwnerCharacter->FindComponentByClass<USpringArmComponent>())
+        {
+            SpringArm->bEnableCameraLag = true;
+            TWeakObjectPtr<USpringArmComponent> WeakSpringArm = SpringArm;
+            FTimerHandle TimerHandle;
+            GetWorld()->GetTimerManager().SetTimer(TimerHandle, [WeakSpringArm]()
+            {
+                if (WeakSpringArm.IsValid()) WeakSpringArm->bEnableCameraLag = false;
+            }, 0.5f, false);
+        }
+    }
+}
+
+void UParkourComponent::Server_EndParkour_Implementation()
 {
     if (!OwnerCharacter || !Movement) return;
 
-    UE_LOG(LogTemp, Warning, TEXT("End Parkour"));
-
-    // 1. 스프링 암 가져오기 및 안전 검사
-    USpringArmComponent* SpringArm = OwnerCharacter->FindComponentByClass<USpringArmComponent>();
-    
-    if (SpringArm)
-    {
-        // 위치 이동 직전에 랙(Lag) 활성화
-        SpringArm->bEnableCameraLag = true;
-        SpringArm->CameraLagSpeed = 3.0f; // 낮을수록 부드러움
-    }
-
-    // 2. 캐릭터 위치 이동 (순간이동)
     OwnerCharacter->SetActorLocation(TargetLocation);
-
-    // 3. 충돌 및 상태 복구
     OwnerCharacter->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-    ParkourState = EParkourState::None;
     Movement->SetMovementMode(MOVE_Walking);
+    ParkourState = EParkourState::None;
+}
 
-    // 4. 안전한 타이머 처리 (람다 캡처 주의)
-    if (SpringArm)
+void UParkourComponent::Server_StartParkour_Implementation(EParkourState NewState, FVector NetTargetLocation)
+{
+    ParkourState = NewState;
+    TargetLocation = NetTargetLocation;
+
+    if (Movement) Movement->DisableMovement();
+    OwnerCharacter->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    // 모든 클라이언트에게 몽타주 재생 명령
+    Multicast_PlayParkourMontage(NewState);
+}
+
+bool UParkourComponent::Server_StartParkour_Validate(EParkourState NewState, FVector NetTargetLocation)
+{
+    return true;
+}
+
+void UParkourComponent::Multicast_PlayParkourMontage_Implementation(EParkourState State)
+{
+    UAnimMontage* MontageToPlay = (State == EParkourState::Hurdle) ? HurdleMontage : ClimbMontage;
+    USkeletalMeshComponent* BodyMesh = GetBodyMesh();
+
+    if (BodyMesh && MontageToPlay)
     {
-        // 0.5초 뒤에 카메라 랙을 다시 끕니다. 
-        // 캐릭터가 파괴되었을 경우를 대비해 TWeakObjectPtr를 사용하면 더 안전합니다.
-        TWeakObjectPtr<USpringArmComponent> WeakSpringArm = SpringArm;
-        
-        FTimerHandle TimerHandle;
-        GetWorld()->GetTimerManager().SetTimer(TimerHandle, [WeakSpringArm]()
+        UAnimInstance* AnimInst = BodyMesh->GetAnimInstance();
+        if (AnimInst)
         {
-            if (WeakSpringArm.IsValid())
-            {
-                WeakSpringArm->bEnableCameraLag = false;
-            }
-        }, 0.5f, false);
+            AnimInst->Montage_Play(MontageToPlay);
+            UE_LOG(LogTemp, Warning, TEXT("Playing Montage on Body Mesh"));
+        }
     }
+}
+
+USkeletalMeshComponent* UParkourComponent::GetBodyMesh() const
+{
+    if (!OwnerCharacter) return nullptr;
+    
+    USkeletalMeshComponent* BodyMesh = Cast<USkeletalMeshComponent>(
+        OwnerCharacter->GetDefaultSubobjectByName(TEXT("Body"))
+    );
+    
+    return BodyMesh;
 }

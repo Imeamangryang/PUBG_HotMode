@@ -31,7 +31,7 @@ bool ABG_PlayerState::ApplyDamage(float DamageAmount)
 		OnRep_IsDead();
 	}
 
-	return true;
+	return true; 
 }
 
 void ABG_PlayerState::OnRep_CurrentHP()

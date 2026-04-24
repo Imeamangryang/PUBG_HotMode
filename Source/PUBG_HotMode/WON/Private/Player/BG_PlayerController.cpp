@@ -1,4 +1,4 @@
-﻿#include "Player/BG_PlayerController.h"
+#include "Player/BG_PlayerController.h"
 
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -169,39 +169,98 @@ void ABG_PlayerController::OnAttackInputStarted()
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
 		BGCharacter->Req_PrimaryAction();
+		return;
 	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnAttackInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnCrouchInputStarted()
 {
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->ToggleCrouchFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnCrouchInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnProneInputStarted()
 {
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->ToggleProneFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnProneInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnLeanLeftInputStarted()
 {
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->StartLeanLeftFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnLeanLeftInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnLeanLeftInputCompleted()
 {
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->StopLeanLeftFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnLeanLeftInputCompleted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnLeanRightInputStarted()
 {
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->StartLeanRightFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnLeanRightInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnLeanRightInputCompleted()
 {
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->StopLeanRightFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnLeanRightInputCompleted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnAimInputStarted()
 {
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->StartAimFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnAimInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnAimInputCompleted()
 {
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->StopAimFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnAimInputCompleted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 ABG_Character* ABG_PlayerController::GetBGCharacter() const
