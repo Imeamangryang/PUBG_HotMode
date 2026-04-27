@@ -17,21 +17,27 @@ bool ABG_PlayerState::ApplyDamage(float DamageAmount)
 		return false;
 	}
 
-	CurrentHP = FMath::Clamp(CurrentHP - DamageAmount, 0.f, MaxHP);
+	SetHealthSnapshot(CurrentHP - DamageAmount, CurrentHP - DamageAmount <= 0.f, MaxHP);
+	return true;  
+}
 
-	if (CurrentHP <= 0.f)
+void ABG_PlayerState::SetHealthSnapshot(float NewCurrentHP, bool bNewIsDead, float NewMaxHP)
+{
+	if (!HasAuthority())
 	{
-		bIsDead = true;
+		UE_LOG(LogTemp, Error, TEXT("%s: SetHealthSnapshot failed because PlayerState had no authority."), *GetNameSafe(this));
+		return;
 	}
 
-	OnRep_CurrentHP();
+	MaxHP = FMath::Max(1.f, NewMaxHP);
+	CurrentHP = FMath::Clamp(NewCurrentHP, 0.f, MaxHP);
+	bIsDead = bNewIsDead || CurrentHP <= 0.f;
 
+	OnRep_CurrentHP();
 	if (bIsDead)
 	{
 		OnRep_IsDead();
 	}
-
-	return true; 
 }
 
 void ABG_PlayerState::OnRep_CurrentHP()

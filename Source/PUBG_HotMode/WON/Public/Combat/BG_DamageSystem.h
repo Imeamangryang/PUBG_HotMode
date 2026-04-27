@@ -6,6 +6,8 @@
 #include "Components/ActorComponent.h"
 #include "BG_DamageSystem.generated.h"
 
+class UBG_HealthComponent;
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class PUBG_HOTMODE_API UBG_DamageSystem : public UActorComponent
 {

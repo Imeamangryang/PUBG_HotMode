@@ -1,243 +1,148 @@
-# BG_PlayerHealthWidget 설계
+# BG_PlayerHealthHUD 설계
 
-## 결론
+## 제약
 
-- 구조
-  - `Widget + Provider + ViewData`
-- 플러그인
-  - UMG ViewModel 미사용
-- 수정 범위
-  - `GEONU` 내부 우선
-- 실제 연결
-  - 현재는 `Health`만
-- 미구현 항목
-  - 필드와 함수만 준비
-  - 실제 gameplay component 참조 금지
+- Tick / Timer / Property Binding 기반 polling 금지
+- Widget이 PlayerState를 직접 조회하지 않음
+- 결합도 최소화, 의존 방향 단방향
+- 현재 실제 연결: `ABG_PlayerState`의 `CurrentHP`, `MaxHP`, `bIsDead`
+- 나머지(Boost, DBNO, 장비, 숨참기)는 더미 값
+- 수정 범위: GEONU 중심 + WON 최소 변경
 
-## 파일 범위
+---
 
-- 수정
-  - [Source/PUBG_HotMode/GEONU/BG_PlayerHealthWidget.h](/C:/Users/me/source/P4/PUBG_HotMode/Source/PUBG_HotMode/GEONU/BG_PlayerHealthWidget.h:13)
-  - [Source/PUBG_HotMode/GEONU/BG_PlayerHealthWidget.cpp](/C:/Users/me/source/P4/PUBG_HotMode/Source/PUBG_HotMode/GEONU/BG_PlayerHealthWidget.cpp:4)
-- 신규
-  - `Source/PUBG_HotMode/GEONU/BG_HUDDataProvider.h`
-  - `Source/PUBG_HotMode/GEONU/BG_HUDDataProvider.cpp`
-- 수정 회피
-  - `Source/PUBG_HotMode/WON/...`
-  - `Build.cs`
-  - `.uproject`
+## 핵심 판단
 
-## ViewData 분리
+- `ABG_PlayerState`는 `CurrentHP`, `bIsDead`를 복제하지만 UI용 delegate가 없음
+- polling 없이 자동 갱신하려면 외부에서 이벤트를 발행해야 함
+- **결정: `ABG_PlayerState`의 빈 `OnRep` 함수에 delegate broadcast 추가 (최소 침습)**
 
-- 1. `Health + Boost + DBNO`
-  - 같은 바 영역
-  - 수치형 표시 묶음
-- 2. `Helmet + Vest + Backpack`
-  - 장비 아이콘 영역
-- 3. `Boost Run + Regeneration`
-  - 상태 아이콘 영역
-- 4. `Breath`
-  - 별도 표시 조건이 강함
+---
 
-## ViewData 구조 제안
+## 구조
 
-```cpp
-USTRUCT(BlueprintType)
-struct FBG_HealthBoostDBNOViewData
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly)
-    float HealthPercent = 1.0f;
-
-    UPROPERTY(BlueprintReadOnly)
-    float BoostPercent = 0.0f;
-
-    UPROPERTY(BlueprintReadOnly)
-    float DBNOPercent = 0.0f;
-
-    UPROPERTY(BlueprintReadOnly)
-    bool bIsDead = false;
-
-    UPROPERTY(BlueprintReadOnly)
-    bool bIsDBNO = false;
-};
-
-USTRUCT(BlueprintType)
-struct FBG_ArmorViewData
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly)
-    int32 HelmetLevel = 0;
-
-    UPROPERTY(BlueprintReadOnly)
-    int32 VestLevel = 0;
-
-    UPROPERTY(BlueprintReadOnly)
-    int32 BackpackLevel = 0;
-};
-
-USTRUCT(BlueprintType)
-struct FBG_StatusEffectViewData
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly)
-    bool bHasBoostRun = false;
-
-    UPROPERTY(BlueprintReadOnly)
-    bool bHasRegeneration = false;
-};
-
-USTRUCT(BlueprintType)
-struct FBG_BreathViewData
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly)
-    float BreathPercent = 0.0f;
-
-    UPROPERTY(BlueprintReadOnly)
-    bool bShouldShowBreath = false;
-};
-
-USTRUCT(BlueprintType)
-struct FBG_PlayerHealthHUDData
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly)
-    FBG_HealthBoostDBNOViewData MainBars;
-
-    UPROPERTY(BlueprintReadOnly)
-    FBG_ArmorViewData Armor;
-
-    UPROPERTY(BlueprintReadOnly)
-    FBG_StatusEffectViewData StatusEffects;
-
-    UPROPERTY(BlueprintReadOnly)
-    FBG_BreathViewData Breath;
-};
+```
+[ABG_PlayerState]  ──delegate──>  [UBG_HealthHUDConnector]
+                                       │
+                                  RenderData 구성
+                                       │
+                                       ▼
+                              [UBG_PlayerHealthWidget]
+                                       │
+                                       ▼
+                              [WBP_PlayerHealthHUD (BP)]
 ```
 
-## 책임 분리
+Presenter 레이어 없이, Connector가 RenderData를 직접 구성하여 Widget에 push.
+현재 변환 로직이 `CurrentHP / MaxHP` 나눗셈 수준이므로 별도 Presenter는 과잉.
+복잡도가 증가하면 그때 추출.
 
-### `UBG_PlayerHealthWidget`
+---
 
-- View 전용
-- `Provider` 생성
-- `Provider`의 `CachedData` 적용
-- Gameplay 객체 직접 탐색 금지
+## 역할 분담
 
-### `UBG_HUDDataProvider`
+| 클래스 | 책임 | 위치 |
+|--------|------|------|
+| `ABG_PlayerState` | HP/사망 변경 시 delegate broadcast | WON (수정) |
+| `UBG_HealthHUDConnector` | PlayerState delegate 구독 → RenderData 구성 → Widget push | GEONU (신규) |
+| `UBG_PlayerHealthWidget` | RenderData 캐시, `BP_OnRenderDataUpdated` hook 노출 | GEONU (신규) |
+| `WBP_PlayerHealthHUD` | UMG 레이아웃, visual 갱신 | Content/GEONU (신규) |
 
-- `UObject`
-- 로컬 `OwningPlayer`, `Pawn`, `PlayerState` 확보
-- `FBG_PlayerHealthHUDData` 갱신
-- 미래 gameplay component 연결 지점 제공
+---
 
-## 현재 실제 연결 범위
+## 설계 원칙
 
-- 연결
-  - `MainBars.HealthPercent`
-  - `MainBars.bIsDead`
-- 소스
-  - `ABG_PlayerState::CurrentHP`
-  - `ABG_PlayerState::MaxHP`
-  - `ABG_PlayerState::bIsDead`
+- **Widget**: passive view — gameplay 객체 참조 금지, RenderData만 소비
+- **Connector**: 유일한 gameplay 접점 — delegate 구독, RenderData 구성, diff 비교 후 Widget push
+- **UI 갱신**: pull이 아닌 push (`BP_OnRenderDataUpdated` 단일 진입점)
 
-## 현재 연결하지 않을 항목
+---
 
-- `MainBars.BoostPercent`
-- `MainBars.DBNOPercent`
-- `MainBars.bIsDBNO`
-- `Armor.*`
-- `StatusEffects.*`
-- `Breath.*`
+## 데이터 흐름
 
-## Provider 구현 기준
+### Render Data (Connector → Widget)
 
-- 실제 `HealthComponent`, `BoostComponent`, `DBNOComponent`, `EquipmentComponent`, `BreathComponent` 구현 금지
-- Provider에는 조회 함수 틀만 둠
-- 초기값만 반환
+Widget이 직접 소비하는 가공 데이터. 4개 영역으로 분리:
 
-```cpp
-float ResolveBoostPercent() const { return 0.0f; }
-float ResolveDBNOPercent() const { return 0.0f; }
-bool ResolveIsDBNO() const { return false; }
-int32 ResolveHelmetLevel() const { return 0; }
-bool ResolveHasBoostRun() const { return false; }
-float ResolveBreathPercent() const { return 0.0f; }
-bool ResolveShouldShowBreath() const { return false; }
+| 영역 | 주요 필드 |
+|------|-----------|
+| MainBars | `HealthPercent`, `BoostPercent`, `DBNOPercent`, `bIsDead`, `bIsDBNO` |
+| Armor | `HelmetLevel`, `VestLevel`, `BackpackLevel` |
+| StatusEffects | `bHasBoostRun`, `bHasRegeneration` |
+| Breath | `BreathPercent`, `bShouldShowBreath` |
+
+---
+
+## 이벤트 흐름
+
+```
+[서버] ApplyDamage() → CurrentHP 변경 → OnRep_CurrentHP() → OnHealthChanged.Broadcast()
+[클라] 복제 수신     →                   OnRep_CurrentHP() → OnHealthChanged.Broadcast()
+  ↓
+Connector 수신 → RenderData 구성 → diff 비교 → Widget.ApplyRenderData()
+  → BP_OnRenderDataUpdated()
 ```
 
-## 참조 방향
+서버에서 `ApplyDamage()` 내부에서 `OnRep`을 직접 호출하므로 서버/클라 양쪽 동작.
 
-- `Widget -> Provider`
-- `Provider -> PlayerController`
-- `Provider -> Pawn`
-- `Provider -> PlayerState`
+---
 
-금지:
+## 외부 수정 사항 (WON — 합의 필요)
 
-- `Widget -> PlayerState`
-- `Widget -> Character`
-- `Widget -> future component`
+| 파일 | 변경 내용 |
+|------|-----------|
+| `BG_PlayerState.h` | `FOnBGHealthChanged`, `FOnBGDeathStateChanged` delegate 선언 + 멤버 추가 |
+| `BG_PlayerState.cpp` | `OnRep_CurrentHP()`에서 `OnHealthChanged.Broadcast(CurrentHP)` |
+|  | `OnRep_IsDead()`에서 `OnDeathStateChanged.Broadcast(bIsDead)` |
 
-## 갱신 방식
+기존 로직 변경 없음. 비어있던 OnRep 함수에 broadcast 1줄 추가.
 
-- 1차
-  - `NativeConstruct`
-  - `NativeTick`
-- 이유
-  - `WON` 수정 없이 가능
-  - `PlayerState` 외부 갱신 이벤트 없음
+---
 
-## API 초안
+## Connector 초기화 흐름
 
-```cpp
-UCLASS()
-class PUBG_HOTMODE_API UBG_HUDDataProvider : public UObject
-{
-    GENERATED_BODY()
-
-public:
-    void Initialize(APlayerController* InOwningPlayer);
-    void Refresh();
-
-    const FBG_PlayerHealthHUDData& GetCachedData() const { return CachedData; }
-
-protected:
-    void ResolveReferences();
-    void UpdateHealthData();
-    void UpdateFutureStubData();
-
-protected:
-    UPROPERTY(Transient)
-    TWeakObjectPtr<APlayerController> OwningPlayerController;
-
-    UPROPERTY(Transient)
-    TWeakObjectPtr<APawn> CachedPawn;
-
-    UPROPERTY(Transient)
-    TWeakObjectPtr<class ABG_PlayerState> CachedPlayerState;
-
-    UPROPERTY(Transient)
-    FBG_PlayerHealthHUDData CachedData;
-};
 ```
+BeginPlay()
+├── IsLocalController() 확인
+├── Widget 생성 → AddToViewport
+├── PlayerState delegate 구독 (지연 바인딩 대응)
+└── 초기 RenderData push
+```
+
+---
+
+## 파일 목록
+
+| 경로 | 역할 | 상태 |
+|------|------|------|
+| `GEONU/BG_PlayerHealthTypes.h` | RenderData 구조체 | 신규 |
+| `GEONU/BG_PlayerHealthWidget.{h,cpp}` | Widget (C++) | 신규 |
+| `GEONU/BG_HealthHUDConnector.{h,cpp}` | 이벤트 브릿지 | 신규 |
+| `Content/GEONU/WBP_PlayerHealthHUD` | Widget Blueprint | 신규 |
+| `WON/.../BG_PlayerState.{h,cpp}` | delegate 추가 | 수정 |
+
+---
 
 ## 구현 순서
 
-1. `FBG_PlayerHealthHUDData`와 하위 `ViewData` 정의
-2. `UBG_HUDDataProvider` 생성
-3. `Health`만 실제 연결
-4. 나머지 항목은 stub 함수만 추가
-5. `BG_PlayerHealthWidget`에서 `RefreshHUD()`와 `ApplyHUDData()` 연결
+1. `ABG_PlayerState`에 delegate 추가 (WON 합의 후)
+2. `BG_PlayerHealthTypes.h` — 구조체 정의
+3. `UBG_PlayerHealthWidget` — RenderData 수신 + BP hook
+4. `UBG_HealthHUDConnector` — 브릿지 (PlayerState → Widget)
+5. `WBP_PlayerHealthHUD` — UMG 레이아웃
+6. PlayerController에 Connector 부착
 
-## 참고
+---
 
-- `BG_HUDDataProvider.h`
-  - 현재 리포지토리에는 없음
-  - 신규 생성 필요
+## 향후 확장
+
+| 시스템 추가 시 | 변경 위치 |
+|----------------|-----------|
+| `UBGHealthComponent` | Connector — Component delegate로 전환 |
+| `UBGBoostComponent` | Connector — Boost 바인딩 추가 |
+| `UBGDBNOComponent` | Connector — DBNO 바인딩 추가 |
+| 인벤토리 (장비) | Connector — 장비 변경 바인딩 추가 |
+| 수중/숨참기 | Connector — Breath 바인딩 추가 |
+
+모든 확장은 **Connector에 바인딩 추가 + RenderData 필드 채우기**로 귀결.
+Widget은 이미 전체 필드를 처리하므로 변경 불필요.

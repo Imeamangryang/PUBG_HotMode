@@ -5,6 +5,7 @@
 #include "BG_PlayerController.generated.h"
 
 class ABG_Character;
+class UBG_PlayerHealthViewModel;
 class UInputAction;
 class UInputMappingContext;
 struct FInputActionValue;
@@ -43,6 +44,10 @@ struct FBGPlayerInputConfig
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Aim")
 	TObjectPtr<UInputAction> AimAction = nullptr;
+	
+	// 상호작용 키
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Core")
+	TObjectPtr<UInputAction> InteractAction;
 };
 
 UCLASS()
@@ -51,10 +56,13 @@ class PUBG_HOTMODE_API ABG_PlayerController : public APlayerController
 	GENERATED_BODY()
 
 public:
+	ABG_PlayerController();
 	virtual void SetupInputComponent() override;
 	virtual void SetPawn(APawn* InPawn) override;
 	virtual void BeginPlay() override;
 	virtual void OnPossess(APawn* InPawn) override;
+
+	UBG_PlayerHealthViewModel* GetHUDViewModel() const { return HUDViewModel; }
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
@@ -68,6 +76,9 @@ protected:
 	void OnJumpInputStarted();
 	void OnJumpInputCompleted();
 	void OnAttackInputStarted();
+	void OnEquipPistolInputStarted();
+	void OnEquipRifleInputStarted();
+	void OnUnequipWeaponInputStarted();
 
 	// Future extension points. Bind an action asset and implement behavior when ready.
 	void OnCrouchInputStarted();
@@ -78,6 +89,7 @@ protected:
 	void OnLeanRightInputCompleted();
 	void OnAimInputStarted();
 	void OnAimInputCompleted();
+	void OnInteractInputStarted(); //상호작용 키
 
 	ABG_Character* GetBGCharacter() const;
 
@@ -87,4 +99,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<ABG_Character> LastBoundCharacter = nullptr;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HUD", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UBG_PlayerHealthViewModel> HUDViewModel = nullptr;
+	
+	
+	
 };

@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "BG_PlayerHealthViewModel.generated.h"
+#include "BG_HealthViewModel.generated.h"
 
 // 式式 Shared delegate types 式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式式
 
@@ -25,12 +25,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
  * Attach to PlayerController to subscribe PlayerState.
  */
 UCLASS(ClassGroup="UI", meta=(BlueprintSpawnableComponent))
-class PUBG_HOTMODE_API UBG_PlayerHealthViewModel : public UActorComponent
+class PUBG_HOTMODE_API UBG_HealthViewModel : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UBG_PlayerHealthViewModel();
+	UBG_HealthViewModel();
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

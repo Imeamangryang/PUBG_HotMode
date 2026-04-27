@@ -1,980 +1,541 @@
-# PUBG의 인벤토리 시스템
+# PUBG 인벤토리 시스템 구현 계획
 
-## 분석
+## 문서 역할
 
-### 장비 슬롯 (왼쪽)
+- 요구사항, 확정 결정, 세부 규칙의 원본은 `Docs/Spec-InventorySystem.md`
+- 이 문서는 Spec을 구현 가능한 작업 순서로 분해하고, 각 작업의 수용 기준과 검증 방법을 정의
+- Plan에는 Spec의 상세 데이터 모델과 게임 규칙을 반복하지 않고, 구현자가 바로 실행할 수 있는 의존성, 파일 범위, 체크포인트를 기록
+- Spec 변경이 필요한 설계 판단은 먼저 Spec에 반영한 뒤 이 Plan의 작업 순서와 검증 기준을 갱신
+- 작업은 `#1 모듈 설정` 형식으로 표기한다. 숫자는 실행 순서, 이름은 참조 기준이다.
 
-- 헬멧: 머리 방어구 (Lv 1~3)
-- 흉갑: 가슴 방어구 (Lv 1~3)
-- 가방: 인벤토리 용량 확장 (Lv 0~3)
-- 빤쓰: 영구 아이템, 인벤토리 용량 확장 → **생략 예정**
+## 구현 분석
 
-### 코스메틱 슬롯 (오른쪽)
+### 핵심 의존성
 
-- 전부 룩템 → **생략 예정**
+| 축 | 먼저 고정해야 하는 이유 | 후속 작업 |
+| --- | --- | --- |
+| 모듈, GameplayTags, AssetManager 설정 | 모든 item key, registry lookup, FastArray 복제의 기반 | DataTable, registry, inventory, equipment |
+| Item row와 registry | 서버 검증과 클라이언트 표시 데이터의 공통 계약 | pickup, equip, reload, use, UI |
+| HealthComponent 기준 상태 | damage, item use, HUD가 동일 source of truth를 사용해야 함 | DamageSystem migration, Heal/Boost use |
+| InventoryComponent | ammo, heal, boost, throwable 수량과 무게 계산의 기준 | backpack, reload, item use, UI |
+| EquipmentComponent | weapon/armor/backpack 슬롯과 기존 weapon state 연결점 | world item, reload, remote visual replication |
+| WorldItemActor | pickup/drop의 서버 검증 진입점 | core gameplay loop, UI 주변 아이템 목록 |
+| ViewModel | Widget과 gameplay state의 경계 | Inventory UI, failure UI |
 
-### 무기 슬롯
+### 위험 우선순위
 
-| 슬롯 | 종류                       |
-| ---- | -------------------------- |
-| 1    | 일반 총기                  |
-| 2    | 일반 총기                  |
-| 3    | 권총                       |
-| 4    | 근접 무기                  |
-| 5    | 투척물 (수류탄, 연막탄 등) |
+- `ABG_PlayerState` Health 제거는 respawn, possess, HUD bind 흐름을 깨뜨릴 수 있으므로 Health migration을 별도 체크포인트로 검증
+- `UBG_ItemDataRegistrySubsystem` 로드 실패는 이후 모든 요청 검증을 막으므로 초기 단계에서 registry load와 invalid row 로그를 확인
+- FastArray owner-only 복제는 UI 갱신 누락이 생기기 쉬우므로 Inventory 단독 단계에서 add/remove/weight delegate를 먼저 안정화
+- Equipment는 public visual state와 owner-only 상세 state가 섞일 위험이 있으므로 복제 조건을 task acceptance에 명시
+- 기존 weapon input/action flow 변경은 범위를 키우기 쉬우므로 reload task는 기존 흐름을 유지하는 adapter 방식으로 제한
+- CommonUI는 C++ 타입을 직접 참조하는 시점에만 Build.cs 의존성을 추가
 
-### 일반 인벤토리
+### 구현 경계
 
-- 최대 12칸 정도 보이는 목록, 스크롤 가능
-- 가방 레벨에 따라 슬롯 수 증가
-- 더 왼쪽에 **주변 아이템 목록** (바닥 루팅)
+- 주 작업 위치는 `Source/PUBG_HotMode/GEONU`, `Content/GEONU`
+- WON 영역 변경은 Character, PlayerController, PlayerState, DamageSystem 연결에 필요한 최소 범위로 제한
+- 신규 gameplay 책임은 ActorComponent 기반으로 분리
+- 서버 gameplay null failure는 silent fail 없이 명시적 error log를 남김
+- 제외 범위는 GAS, Unreal MVVM plugin, SaveGame persistence, weapon fire system rewrite, cosmetic/underwear slot
 
-### 용량 (슬롯 기반)
+## 기술 설계 요약
 
-| 가방 레벨   | 슬롯 수  |
-| ----------- | -------- |
-| 없음 (Lv 0) | 20       |
-| Lv 1        | 30 (+10) |
-| Lv 2        | 40 (+20) |
-| Lv 3        | 50 (+30) |
+### 런타임 계약
 
-### 원작 기준 방어구 (참고)
+- Item identity: `EBG_ItemType` + `FGameplayTag`
+- Row lookup: `UBG_ItemDataRegistrySubsystem` 경유
+- State mutation: 서버 권위
+- UI request: Widget -> ViewModel -> Component RPC
+- Failure feedback: owning client failure RPC
+- World item 표시: generic actor + DataTable `UStaticMesh`
 
-| 장비           | Lv 1 | Lv 2 | Lv 3 |
-| -------------- | ---- | ---- | ---- |
-| 헬멧 피해 감소 | 30%  | 40%  | 55%  |
-| 흉갑 피해 감소 | 30%  | 40%  | 55%  |
-| 내구도         | 80   | 150  | 230  |
+### 컴포넌트 연결
 
----
+| 컴포넌트 | 제공 API | 의존 대상 | 최초 구현 작업 |
+| --- | --- | --- | --- |
+| `UBG_HealthComponent` | damage, heal, death, boost | Character, DamageSystem, HealthViewModel | #4 Health Component |
+| `UBG_InventoryComponent` | stack add/remove, weight, quantity | Item registry, Equipment backpack bonus | #6 Inventory FastArray |
+| `UBG_EquipmentComponent` | weapon/equipment slots, active weapon, adapter | Item registry, Inventory | #7 Equipment Component |
+| `UBG_ItemUseComponent` | heal/boost timer, cancel, consume/apply | Inventory, Health | #12 Item Use |
+| `ABG_WorldItemActor` | pickup/drop replicated item state | Registry, Inventory, Equipment | #8 World Item 흐름 |
+| `UBG_InventoryViewModel` | UI render data, request forwarding | Inventory, Equipment, Registry | #9 Inventory ViewModel |
 
-## 확인된 사항
+### 의존성 그래프
 
-| #   | 질문             | 결정                                                                       |
-| --- | ---------------- | -------------------------------------------------------------------------- |
-| Q1  | 무기 시스템 범위 | 무기 슬롯 구조 포함. 총기 구현은 나중에 할 예정                            |
-| Q2  | 용량 시스템      | 슬롯 수 기반. 가방 레벨에 따라 슬롯 수 증가                                |
-| Q3  | 스택 규칙        | 원작처럼 아이템별 스택 상한이 다름. DataTable에 정의                       |
-| Q4  | 방어구 세부      | 원작처럼 내구도 감소 + 파괴. 피해 적용 경로는 미정                         |
-| Q5  | 바닥 아이템 스폰 | 원작처럼 고정 스폰 포인트 + 랜덤 아이템 테이블                             |
-| Q6  | 줍기/버리기      | F키 + UI 클릭 줍기. 장비는 줍기 시 자동 장착. 버리기는 인벤토리에서 드래그 |
-| Q7  | UI 구현          | UMG Widget + C++ UserWidget (로직). Tab 전체 인벤토리 + 퀵슬롯 HUD         |
-| Q8  | 담당 경계        | 모든 코드는 `GEONU/`에 작성                                                |
+```text
+#1 모듈 설정
+  -> #2 아이템 데이터 계약
+    -> #3 Item Registry Subsystem
+      -> #6 Inventory FastArray
+        -> #7 Equipment Component
+          -> #8 World Item 흐름
+          -> #11 Reload 연동
+      -> #9 Inventory ViewModel
+        -> #10 Inventory UI
 
----
+#1 모듈 설정
+  -> #4 Health Component
+    -> #5 Health Migration
+    -> #12 Item Use
 
-## 설계
+#4 Health Component + #6 Inventory FastArray + #9 Inventory ViewModel
+  -> #12 Item Use
 
-### 아키텍처 개요
+#1 모듈 설정부터 #12 Item Use까지의 핵심 작업
+  -> #14 최종 검증
 
-```
-ABGCharacter
-├── UBGInventoryComponent      (신규 — 슬롯 기반 아이템 보관, 스택 관리)
-├── UBGEquipmentComponent      (신규 — 장비 슬롯: 헬멧, 흉갑, 가방 + 무기 슬롯 5개)
-├── UBGInteractionComponent    (신규 — 주변 아이템 감지, 줍기, 장비 자동 장착)
-├── UBGHealthComponent         (기존 설계)
-├── UBGBoostComponent          (기존 설계)
-├── UBGHealingComponent        (기존 설계 — IBGInventoryInterface 사용)
-└── UBGDBNOComponent           (기존 설계)
-
-ABGPickupItem (Actor)           (신규 — 월드 배치 아이템 액터)
-ABGItemSpawnPoint (Actor)       (신규 — 고정 스폰 포인트, 랜덤 아이템 테이블)
-
-UI (C++ UserWidget 기반)
-├── UBGInventoryWidget          (신규 — Tab 전체 인벤토리 화면)
-├── UBGInventorySlotWidget      (신규 — 개별 슬롯 위젯)
-├── UBGNearbyItemWidget         (신규 — 주변 아이템 목록)
-└── UBGQuickSlotWidget          (신규 — 퀵슬롯 HUD)
-```
-
-### 1. 아이템 데이터 — DataTable 기반
-
-모든 아이템 정보를 하나의 마스터 DataTable로 관리합니다.
-
-```cpp
-// 아이템 카테고리
-UENUM(BlueprintType)
-enum class EBGItemCategory : uint8
-{
-    Consumable,    // 소모품 (붕대, 구급상자, 에너지 드링크 등)
-    Equipment,     // 장비 (헬멧, 흉갑, 가방)
-    Weapon,        // 무기 (추후)
-    Ammo,          // 탄약 (추후)
-    Attachment,    // 부착물 (추후)
-    Throwable      // 투척물 (추후)
-};
-
-// 장비 슬롯 타입 (방어구/가방)
-UENUM(BlueprintType)
-enum class EBGEquipSlot : uint8
-{
-    None,
-    Helmet,
-    Vest,
-    Backpack
-};
-
-// 무기 슬롯 타입
-UENUM(BlueprintType)
-enum class EBGWeaponSlot : uint8
-{
-    None,
-    Primary1,    // 슬롯 1: 일반 총기
-    Primary2,    // 슬롯 2: 일반 총기
-    Pistol,      // 슬롯 3: 권총
-    Melee,       // 슬롯 4: 근접 무기
-    Throwable    // 슬롯 5: 투척물
-};
+#13 Boost 후순위 효과는 #12 Item Use 이후 진행
 ```
 
-```cpp
-// 마스터 아이템 DataTable Row
-USTRUCT(BlueprintType)
-struct FBGItemRow : public FTableRowBase
-{
-    GENERATED_BODY()
+### 병렬 가능성
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    FText DisplayName;
+| 시점 | 병렬 가능한 작업 | 조건 |
+| --- | --- | --- |
+| #1 모듈 설정 완료 후 | #2 아이템 데이터 계약과 #4 Health Component | item data 계약과 HealthComponent가 직접 충돌하지 않음 |
+| #3 Item Registry Subsystem 완료 후 | #5 Health Migration 준비와 #6 Inventory FastArray 구현 | Health migration과 InventoryComponent 파일 범위 분리 |
+| #6 Inventory FastArray 완료 후 | #7 Equipment Component 일부와 #9 Inventory ViewModel render data 설계 | Equipment public contract를 먼저 합의해야 함 |
+| #8 World Item 흐름 완료 후 | #10 Inventory UI 조립과 #11 Reload 연동 | ViewModel request API가 고정되어야 함 |
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    EBGItemCategory Category = EBGItemCategory::Consumable;
+## 공통 검증
 
-    // 한 슬롯에 최대 쌓기 수량 (아이템마다 다름)
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    int32 MaxStackCount = 1;
+Build:
 
-    // --- 장비 전용 ---
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditCondition = "Category == EBGItemCategory::Equipment"))
-    EBGEquipSlot EquipSlot = EBGEquipSlot::None;
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    int32 EquipLevel = 0;  // 1~3
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    float DamageReduction = 0.f;  // 0~1 (0.3 = 30%)
-
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    float MaxDurability = 0.f;
-
-    // 가방: 슬롯 수 증가량
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    int32 ExtraSlots = 0;
-
-    // --- 무기 전용 (추후) ---
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditCondition = "Category == EBGItemCategory::Weapon"))
-    EBGWeaponSlot WeaponSlot = EBGWeaponSlot::None;
-
-    // --- 공통 ---
-    // 월드 배치용 메시
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    TSoftObjectPtr<UStaticMesh> PickupMesh;
-
-    // UI용 아이콘
-    UPROPERTY(EditAnywhere, BlueprintReadOnly)
-    TSoftObjectPtr<UTexture2D> Icon;
-};
+```powershell
+& "<UE_ROOT>\Engine\Build\BatchFiles\Build.bat" PUBG_HotModeEditor Win64 Development -Project="D:\Dev\P4\PUBG_HotMode\PUBG_HotMode.uproject" -WaitMutex
 ```
 
-**마스터 아이템 DataTable 예시 (DT_Items)**:
-
-| RowName             | DisplayName       | Category   | MaxStack | EquipSlot | Level | DmgReduction | Durability | ExtraSlots |
-| ------------------- | ----------------- | ---------- | -------- | --------- | ----- | ------------ | ---------- | ---------- |
-| `Bandage`           | 붕대              | Consumable | 5        | —         | —     | —            | —          | —          |
-| `FirstAidKit`       | 구급 상자         | Consumable | 1        | —         | —     | —            | —          | —          |
-| `MedKit`            | 의료용 키트       | Consumable | 1        | —         | —     | —            | —          | —          |
-| `EnergyDrink`       | 에너지 드링크     | Consumable | 1        | —         | —     | —            | —          | —          |
-| `Painkiller`        | 진통제            | Consumable | 1        | —         | —     | —            | —          | —          |
-| `AdrenalineSyringe` | 아드레날린 주사기 | Consumable | 1        | —         | —     | —            | —          | —          |
-| `Helmet_Lv1`        | 군용 헬멧         | Equipment  | 1        | Helmet    | 1     | 0.30         | 80         | —          |
-| `Helmet_Lv2`        | 전투 헬멧         | Equipment  | 1        | Helmet    | 2     | 0.40         | 150        | —          |
-| `Helmet_Lv3`        | 특수 헬멧         | Equipment  | 1        | Helmet    | 3     | 0.55         | 230        | —          |
-| `Vest_Lv1`          | 경찰 조끼         | Equipment  | 1        | Vest      | 1     | 0.30         | 200        | —          |
-| `Vest_Lv2`          | 군용 조끼         | Equipment  | 1        | Vest      | 2     | 0.40         | 220        | —          |
-| `Vest_Lv3`          | 특수 조끼         | Equipment  | 1        | Vest      | 3     | 0.55         | 250        | —          |
-| `Backpack_Lv1`      | 소형 배낭         | Equipment  | 1        | Backpack  | 1     | —            | —          | 10         |
-| `Backpack_Lv2`      | 중형 배낭         | Equipment  | 1        | Backpack  | 2     | —            | —          | 20         |
-| `Backpack_Lv3`      | 대형 배낭         | Equipment  | 1        | Backpack  | 3     | —            | —          | 30         |
-
-> 인벤토리 기본 슬롯: 20칸, 가방 Lv1: +10 = 30칸, Lv2: +20 = 40칸, Lv3: +30 = 50칸
-> 회복 아이템의 효과(CastTime, Duration 등)는 기존 `DT_HealItems`(Health 시스템)에서 관리합니다.
-
-### 2. `FBGInventorySlot` — 인벤토리 슬롯 구조체
-
-```cpp
-USTRUCT(BlueprintType)
-struct FBGInventorySlot
-{
-    GENERATED_BODY()
-
-    // 아이템 식별자 (DT_Items의 RowName). NAME_None이면 빈 슬롯
-    UPROPERTY(BlueprintReadOnly)
-    FName ItemRowName = NAME_None;
-
-    // 현재 스택 수량
-    UPROPERTY(BlueprintReadOnly)
-    int32 Count = 0;
-
-    bool IsEmpty() const { return ItemRowName == NAME_None || Count <= 0; }
-};
-```
-
-### 3. `FBGEquipSlotState` — 장비 슬롯 상태
+수동 검증:
 
-```cpp
-USTRUCT(BlueprintType)
-struct FBGEquipSlotState
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly)
-    FName ItemRowName = NAME_None;
-
-    // 현재 내구도 (장착 시 MaxDurability로 초기화)
-    UPROPERTY(BlueprintReadOnly)
-    float CurrentDurability = 0.f;
-
-    bool IsEmpty() const { return ItemRowName == NAME_None; }
-};
-```
-
-### 4. `UBGInventoryComponent` (ActorComponent)
-
-슬롯 기반 아이템 보관을 담당합니다. `IBGInventoryInterface`를 구현합니다.
-
-**Owner**: `ABGCharacter`
-
-```cpp
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnInventoryChanged);
-
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class UBGInventoryComponent : public UActorComponent, public IBGInventoryInterface
-{
-    GENERATED_BODY()
-
-public:
-    // --- 복제 프로퍼티 ---
-
-    // 인벤토리 슬롯 배열 (서버 권한, 클라이언트에 복제)
-    UPROPERTY(ReplicatedUsing = OnRep_Slots, BlueprintReadOnly, Category = "Inventory")
-    TArray<FBGInventorySlot> Slots;
-
-    // 현재 최대 슬롯 수 (기본 + 가방 보너스). 서버에서 갱신
-    UPROPERTY(Replicated, BlueprintReadOnly, Category = "Inventory")
-    int32 MaxSlotCount = 20;
-
-    // 기본 슬롯 수 (가방 없을 때)
-    UPROPERTY(EditDefaultsOnly, Category = "Inventory")
-    int32 BaseSlotCount = 20;
-
-    // DataTable 참조
-    UPROPERTY(EditDefaultsOnly, Category = "Inventory")
-    TObjectPtr<UDataTable> ItemDataTable;
-
-    // 델리게이트
-    UPROPERTY(BlueprintAssignable, Category = "Inventory")
-    FOnInventoryChanged OnInventoryChanged;
-
-    // --- IBGInventoryInterface 구현 ---
-    virtual bool HasHealItem(FName ItemRowName) const override;
-    virtual bool ConsumeHealItem(FName ItemRowName) override;
-
-    // --- 핵심 함수 (서버 전용) ---
-
-    // 아이템 추가. 슬롯 부족 시 false 반환. OutRemaining: 넣지 못한 수량
-    UFUNCTION(BlueprintCallable, Category = "Inventory")
-    bool AddItem(FName ItemRowName, int32 Amount = 1, int32& OutRemaining = 0);
-
-    // 아이템 제거
-    UFUNCTION(BlueprintCallable, Category = "Inventory")
-    bool RemoveItem(FName ItemRowName, int32 Amount = 1);
-
-    // 아이템 버리기 (인벤토리에서 제거 → 월드에 PickupItem 스폰)
-    UFUNCTION(Server, Reliable)
-    void Server_DropItem(int32 SlotIndex, int32 Amount = 1);
+- Dedicated Server + 2 Clients PIE
+- owner client 기준 pickup, stack, drop, equip, unequip, reload, use
+- remote client 기준 weapon, armor, world item 외형 상태
+- owner-only inventory, ammo, durability, boost 정보가 원격 클라이언트에 노출되지 않는지 확인
 
-    // 사용된 슬롯 수
-    UFUNCTION(BlueprintPure, Category = "Inventory")
-    int32 GetUsedSlotCount() const;
+## 구현 단위
 
-    // 빈 슬롯 수
-    UFUNCTION(BlueprintPure, Category = "Inventory")
-    int32 GetFreeSlotCount() const;
+### #1 모듈 설정
 
-    // 특정 아이템 보유 수량 조회 (모든 슬롯 합산)
-    UFUNCTION(BlueprintPure, Category = "Inventory")
-    int32 GetItemCount(FName ItemRowName) const;
+Description: Inventory 시스템 기반 기능에 필요한 빌드 모듈, GameplayTag, AssetManager 설정을 먼저 고정한다. C++에서 CommonUI 타입을 직접 참조하지 않는 동안에는 CommonUI 모듈 추가를 보류한다.
 
-    // 슬롯 수 갱신 (EquipmentComponent에서 가방 변경 시 호출)
-    void UpdateMaxSlots(int32 NewExtraSlots);
+Acceptance:
+- `GameplayTags`, `NetCore`가 `PUBG_HotMode.Build.cs`에 추가됨
+- `DefaultGameplayTags.ini`에 Spec의 item tag와 장비 `Lv1`/`Lv2`/`Lv3` tag가 등록됨
+- `DA_ItemDataRegistry`용 Primary Asset Type 설정이 config 또는 문서화된 editor 절차로 확정됨
 
-    // DataTable Row 조회 헬퍼
-    const FBGItemRow* FindItemRow(FName RowName) const;
+Verification:
+- Build 성공
+- Editor에서 GameplayTag와 Primary Asset Type 조회
 
-protected:
-    UFUNCTION()
-    void OnRep_Slots();
+Dependencies: 없음
 
-    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-};
-```
-
-**AddItem 흐름**:
+Files likely touched:
+- `Source/PUBG_HotMode/PUBG_HotMode.Build.cs`
+- `Config/DefaultGameplayTags.ini`
+- `Config/DefaultEngine.ini`
 
-```
-AddItem(RowName, Amount, OutRemaining)
-├── Authority 검증
-├── DataTable에서 FBGItemRow 조회
-├── 1단계: 기존 슬롯에 같은 아이템이 있고 스택 여유가 있으면 채움
-│   └── 각 슬롯: Min(남은 Amount, MaxStackCount - Count) 만큼 추가
-├── 2단계: 남은 Amount가 있으면 빈 슬롯에 새로 생성
-│   ├── 빈 슬롯 = Slots 중 IsEmpty() || Slots.Num() < MaxSlotCount
-│   └── 각 슬롯: Min(남은 Amount, MaxStackCount)
-├── OutRemaining = 넣지 못한 수량
-├── OnRep_Slots() → OnInventoryChanged 브로드캐스트
-└── return (OutRemaining == 0)
-```
-
-**Server_DropItem 흐름**:
-
-```
-Server_DropItem(SlotIndex, Amount)
-├── Authority 검증
-├── SlotIndex 유효성, Slots[SlotIndex].IsEmpty() 체크
-├── 버릴 수량 = Min(Amount, Slots[SlotIndex].Count)
-├── Slots[SlotIndex].Count -= 버릴 수량
-│   └── Count == 0이면 슬롯 비움 (ItemRowName = NAME_None)
-├── 캐릭터 전방에 ABGPickupItem 스폰 (RowName, 버릴 수량)
-├── OnRep_Slots() → OnInventoryChanged
-└── 인벤토리가 MaxSlotCount 초과 상태였으면 초과 슬롯 정리
-```
-
-### 5. `UBGEquipmentComponent` (ActorComponent)
-
-장비 슬롯(헬멧/흉갑/가방) + 무기 슬롯(5개)을 관리하고, 방어구 효과를 적용합니다.
-
-**Owner**: `ABGCharacter`
-
-```cpp
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEquipmentChanged, EBGEquipSlot, Slot, FName, NewItemRowName);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnWeaponSlotChanged, EBGWeaponSlot, Slot, FName, NewItemRowName);
-
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class UBGEquipmentComponent : public UActorComponent
-{
-    GENERATED_BODY()
-
-public:
-    // --- 방어구/가방 슬롯 (복제) ---
-    UPROPERTY(ReplicatedUsing = OnRep_HelmetSlot, BlueprintReadOnly, Category = "Equipment")
-    FBGEquipSlotState HelmetSlot;
-
-    UPROPERTY(ReplicatedUsing = OnRep_VestSlot, BlueprintReadOnly, Category = "Equipment")
-    FBGEquipSlotState VestSlot;
-
-    UPROPERTY(ReplicatedUsing = OnRep_BackpackSlot, BlueprintReadOnly, Category = "Equipment")
-    FBGEquipSlotState BackpackSlot;
-
-    // --- 무기 슬롯 (복제, 추후 확장) ---
-    UPROPERTY(ReplicatedUsing = OnRep_WeaponSlots, BlueprintReadOnly, Category = "Equipment")
-    TMap<EBGWeaponSlot, FName> WeaponSlots;
-    // 초기화: {Primary1: NAME_None, Primary2: NAME_None, Pistol: NAME_None, Melee: NAME_None, Throwable: NAME_None}
-
-    UPROPERTY(EditDefaultsOnly, Category = "Equipment")
-    TObjectPtr<UDataTable> ItemDataTable;
-
-    UPROPERTY(BlueprintAssignable, Category = "Equipment")
-    FOnEquipmentChanged OnEquipmentChanged;
-
-    UPROPERTY(BlueprintAssignable, Category = "Equipment")
-    FOnWeaponSlotChanged OnWeaponSlotChanged;
-
-    // --- 핵심 함수 (서버 전용) ---
-
-    // 장비 장착. 인벤토리 연동: 기존 장비 해제 → 인벤토리, 새 장비 인벤토리에서 제거
-    UFUNCTION(BlueprintCallable, Category = "Equipment")
-    bool EquipItem(FName ItemRowName);
-
-    // 장비 해제 → 인벤토리로 이동
-    UFUNCTION(BlueprintCallable, Category = "Equipment")
-    bool UnequipItem(EBGEquipSlot Slot);
-
-    // 장비 자동 장착 시도 (줍기 시 호출). 빈 슬롯이면 장착, 상위 레벨이면 교체
-    // return true이면 인벤토리에 넣지 않음 (바로 장착됨)
-    bool TryAutoEquip(FName ItemRowName);
-
-    // 피격 시: 방어구 효과 적용 (내구도 차감, 파괴)
-    UFUNCTION(BlueprintCallable, Category = "Equipment")
-    float ApplyArmorReduction(float InDamage, EBGEquipSlot HitSlot);
-
-    UFUNCTION(BlueprintPure, Category = "Equipment")
-    float GetDamageReduction(EBGEquipSlot Slot) const;
-
-    // 현재 가방의 ExtraSlots 값 조회
-    int32 GetBackpackExtraSlots() const;
-
-protected:
-    UFUNCTION() void OnRep_HelmetSlot();
-    UFUNCTION() void OnRep_VestSlot();
-    UFUNCTION() void OnRep_BackpackSlot();
-    UFUNCTION() void OnRep_WeaponSlots();
-
-    void UpdateBackpackSlots();  // 가방 변경 시 InventoryComponent 슬롯 수 갱신
-
-    virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-};
-```
-
-**TryAutoEquip 흐름 (장비 줍기 시)**:
-
-```
-TryAutoEquip(RowName)
-├── DataTable에서 FBGItemRow 조회
-├── Category != Equipment → return false
-├── 해당 EquipSlot의 현재 장비 확인:
-│   ├── 빈 슬롯 → 바로 장착 → return true
-│   ├── 현재 장비 레벨 < 새 장비 레벨 → 기존 장비를 인벤토리로 이동, 새 장비 장착 → return true
-│   └── 현재 장비 레벨 >= 새 장비 레벨 → return false (인벤토리로 넘김)
-```
-
-**ApplyArmorReduction 흐름**:
-
-```
-ApplyArmorReduction(InDamage, HitSlot)
-├── 해당 슬롯의 FBGEquipSlotState 조회
-├── 빈 슬롯이면 → return InDamage (감소 없음)
-├── ReducedDamage = InDamage * (1 - DamageReduction)
-├── AbsorbedDamage = InDamage - ReducedDamage
-├── CurrentDurability -= AbsorbedDamage
-├── if (CurrentDurability <= 0)
-│   ├── 장비 파괴: 슬롯 비움 (ItemRowName = NAME_None)
-│   ├── Backpack이면 → UpdateBackpackSlots()
-│   │   └── 슬롯 수 감소 시 넘치는 아이템은 월드에 드롭
-│   └── OnEquipmentChanged 브로드캐스트
-└── return ReducedDamage
-```
-
-**EquipItem 흐름**:
-
-```
-EquipItem(RowName)
-├── Authority 검증
-├── DataTable에서 FBGItemRow 조회
-├── Category == Equipment, EquipSlot != None 확인
-├── 해당 슬롯에 이미 장비가 있는가?
-│   └── 있으면: 기존 장비를 인벤토리로 이동 (UnequipItem)
-├── 인벤토리에서 아이템 제거 (InventoryComp->RemoveItem)
-├── 슬롯 상태 설정:
-│   ├── ItemRowName = RowName
-│   └── CurrentDurability = ItemRow.MaxDurability
-├── Backpack인 경우 → UpdateBackpackSlots()
-├── OnRep → OnEquipmentChanged 브로드캐스트
-└── return true
-```
-
-**방어구 피해 적용 흐름 (DamageSystem 연동)**:
-
-```
-데미지 경로 (피해 적용 주체 미정):
-├── 피격 부위 판정 (머리/몸통) → HitSlot 결정
-├── float ReducedDamage = EquipComp->ApplyArmorReduction(Damage, HitSlot)
-└── HealthComp->ApplyDamage(ReducedDamage, Instigator)
-```
-
-> 피해 적용 경로의 정확한 위치(DamageSystem vs 별도 컴포넌트)는 추후 결정.
-
-### 6. `UBGInteractionComponent` (ActorComponent)
-
-주변 아이템 감지와 줍기를 담당합니다. 장비 아이템은 줍기 시 자동 장착을 시도합니다.
-
-**Owner**: `ABGCharacter`
-
-```cpp
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnNearbyItemsChanged, const TArray<FBGNearbyItem>&, NearbyItems);
-
-USTRUCT(BlueprintType)
-struct FBGNearbyItem
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly) TWeakObjectPtr<AActor> ItemActor;
-    UPROPERTY(BlueprintReadOnly) FName ItemRowName;
-    UPROPERTY(BlueprintReadOnly) int32 Count;
-    UPROPERTY(BlueprintReadOnly) float Distance;
-};
-
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class UBGInteractionComponent : public UActorComponent
-{
-    GENERATED_BODY()
-
-public:
-    // 감지 범위
-    UPROPERTY(EditDefaultsOnly, Category = "Interaction")
-    float DetectionRadius = 300.f;
-
-    // 줍기 가능 최대 거리
-    UPROPERTY(EditDefaultsOnly, Category = "Interaction")
-    float PickupRange = 200.f;
-
-    // 감지 주기 (성능 최적화)
-    UPROPERTY(EditDefaultsOnly, Category = "Interaction")
-    float ScanInterval = 0.25f;
-
-    UPROPERTY(BlueprintAssignable)
-    FOnNearbyItemsChanged OnNearbyItemsChanged;
-
-    // 주변 아이템 목록 (클라이언트 로컬, 복제 불필요)
-    UPROPERTY(BlueprintReadOnly, Category = "Interaction")
-    TArray<FBGNearbyItem> NearbyItems;
-
-    // F키 입력 시: 가장 가까운 아이템 줍기
-    UFUNCTION(BlueprintCallable, Category = "Interaction")
-    void PickupClosest();
-
-    // UI에서 특정 아이템 클릭 시: 해당 아이템 줍기
-    UFUNCTION(Server, Reliable)
-    void Server_PickupItem(AActor* ItemActor);
-
-protected:
-    virtual void TickComponent(float DeltaTime, ...) override;
-
-    float ScanAccumulator = 0.f;
-    void ScanNearbyItems();  // Overlap 기반 주변 스캔
-};
-```
-
-**주변 아이템 감지 (클라이언트 Tick)**:
-
-```
-TickComponent(DeltaTime)  [Owning Client]
-├── ScanAccumulator += DeltaTime
-├── if (ScanAccumulator >= ScanInterval)
-│   ├── ScanAccumulator = 0
-│   └── ScanNearbyItems()
-│       ├── OverlapMultiByChannel(구체 감지, DetectionRadius)
-│       ├── ABGPickupItem인 액터만 필터
-│       ├── NearbyItems 배열 갱신 (거리순 정렬)
-│       └── OnNearbyItemsChanged 브로드캐스트 → UI 갱신
-```
-
-**줍기 흐름 (장비 자동 장착 포함)**:
-
-```
-[Client]                                  [Server]
-   │                                         │
-   ├─ F키 / UI 클릭                          │
-   │──Server_PickupItem(ItemActor)─────────>│
-   │                                         ├─ ItemActor 유효성 검증
-   │                                         ├─ 거리 검증 (PickupRange)
-   │                                         ├─ DataTable에서 FBGItemRow 조회
-   │                                         │
-   │                                         ├─ [장비 아이템인 경우]
-   │                                         │   ├─ EquipComp->TryAutoEquip(RowName)
-   │                                         │   ├─ 성공 시 → ItemActor->Destroy(), 끝
-   │                                         │   └─ 실패 시 → 아래 인벤토리 추가로 진행
-   │                                         │
-   │                                         ├─ [일반 아이템 / 자동장착 실패]
-   │                                         │   ├─ InventoryComp->AddItem(RowName, Count)
-   │                                         │   └─ 슬롯 부족 시 실패 → 클라이언트에 알림
-   │                                         │
-   │                                         ├─ 성공 시: ItemActor->Destroy()
-   │                                         │
-   │<──OnRep_Slots (인벤토리 갱신)──────────│
-   │<──OnRep_EquipSlot (장비 갱신)──────────│
-```
-
-### 7. `ABGPickupItem` (Actor)
-
-월드에 배치되는 줍기 가능한 아이템 액터.
-
-```cpp
-UCLASS()
-class ABGPickupItem : public AActor
-{
-    GENERATED_BODY()
-
-public:
-    ABGPickupItem();
-
-    // 이 액터가 나타내는 아이템 (DT_Items의 RowName)
-    UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category = "Item")
-    FName ItemRowName;
-
-    // 수량
-    UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category = "Item")
-    int32 Count = 1;
-
-    UPROPERTY(EditDefaultsOnly, Category = "Item")
-    TObjectPtr<UDataTable> ItemDataTable;
-
-protected:
-    UPROPERTY(VisibleAnywhere) TObjectPtr<UStaticMeshComponent> MeshComp;
-    UPROPERTY(VisibleAnywhere) TObjectPtr<USphereComponent> CollisionComp;
-
-    virtual void BeginPlay() override;
-    // BeginPlay에서 DataTable 조회 → MeshComp에 PickupMesh 설정
-};
-```
-
-### 8. `ABGItemSpawnPoint` (Actor)
-
-에디터에 배치하는 아이템 스폰 포인트. 매치 시작 시 랜덤 아이템 테이블에서 아이템을 뽑아 `ABGPickupItem`을 스폰합니다.
-
-```cpp
-// 스폰 테이블 항목
-USTRUCT(BlueprintType)
-struct FBGItemSpawnEntry
-{
-    GENERATED_BODY()
-
-    UPROPERTY(EditAnywhere) FName ItemRowName;  // DT_Items의 RowName
-    UPROPERTY(EditAnywhere) int32 MinCount = 1;
-    UPROPERTY(EditAnywhere) int32 MaxCount = 1;
-    UPROPERTY(EditAnywhere) float Weight = 1.f; // 확률 가중치 (높을수록 자주 스폰)
-};
-
-UCLASS()
-class ABGItemSpawnPoint : public AActor
-{
-    GENERATED_BODY()
-
-public:
-    // 이 스폰 포인트에서 나올 수 있는 아이템 목록과 확률
-    UPROPERTY(EditAnywhere, Category = "Spawn")
-    TArray<FBGItemSpawnEntry> SpawnTable;
-
-    // 아무것도 스폰되지 않을 확률 (0~1, 0.3 = 30% 확률로 빈 스폰)
-    UPROPERTY(EditAnywhere, Category = "Spawn")
-    float EmptyChance = 0.2f;
-
-    // 참조할 아이템 DataTable
-    UPROPERTY(EditDefaultsOnly, Category = "Spawn")
-    TObjectPtr<UDataTable> ItemDataTable;
-
-    // 서버에서 호출: 랜덤 아이템 스폰
-    UFUNCTION(BlueprintCallable, Category = "Spawn")
-    void SpawnRandomItem();
-
-protected:
-    virtual void BeginPlay() override;
-    // BeginPlay에서 서버만 SpawnRandomItem() 호출
-};
-```
-
-**스폰 흐름 (서버, 매치 시작 시)**:
-
-```
-BeginPlay() [서버]
-└── SpawnRandomItem()
-    ├── FMath::FRand() < EmptyChance → 스폰 안 함, 종료
-    ├── 가중치 기반 랜덤 선택: SpawnTable에서 1개 FBGItemSpawnEntry 뽑기
-    ├── Count = FMath::RandRange(MinCount, MaxCount)
-    ├── ABGPickupItem 스폰 (이 액터 위치, RowName, Count)
-    └── 스폰된 PickupItem은 복제되어 모든 클라이언트에 보임
-```
-
-> 스폰 포인트는 에디터에서 레벨에 수동 배치합니다.
-> SpawnTable은 스폰 포인트별로 다르게 설정할 수 있어 (건물 안 = 방어구 위주, 야외 = 소모품 위주 등) 지역별 룻 차별화가 가능합니다.
-
-### 9. DamageSystem 연동 변경
-
-기존 데미지 경로에 방어구를 삽입합니다. **피해 적용 주체는 미정**이므로 인터페이스만 정의합니다.
-
-```
-기존: DamageSystem → PlayerState::ApplyDamage(RawDamage)
-
-변경: [피해 적용 주체] → EquipmentComponent::ApplyArmorReduction(RawDamage, HitSlot)
-                       → HealthComponent::ApplyDamage(ReducedDamage, Instigator)
-```
-
-피격 부위(HitSlot) 판정:
-- Sphere Trace의 HitResult에서 BoneName 확인
-- 머리 본(head)에 해당하면 → Helmet 슬롯
-- 나머지 → Vest 슬롯
-- 본 판정 불가 시 → Vest (기본값)
-
-### 10. UI 구조 (C++ UserWidget 기반)
-
-UI 로직은 최대한 C++ `UUserWidget` 서브클래스에서 처리하고, UMG Editor는 비주얼 레이아웃만 담당합니다.
-
-#### `UBGInventoryWidget` (Tab 전체 인벤토리 화면)
-
-```cpp
-UCLASS()
-class UBGInventoryWidget : public UUserWidget
-{
-    GENERATED_BODY()
-
-public:
-    // 인벤토리 슬롯 그리드 (UMG에서 바인딩)
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UUniformGridPanel> SlotGrid;
-
-    // 장비 슬롯 영역
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UBGInventorySlotWidget> HelmetSlotWidget;
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UBGInventorySlotWidget> VestSlotWidget;
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UBGInventorySlotWidget> BackpackSlotWidget;
-
-    // 주변 아이템 목록
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UScrollBox> NearbyItemList;
-
-    // 컴포넌트 참조 (NativeConstruct에서 캐싱)
-    void SetOwnerComponents(UBGInventoryComponent* InvComp, UBGEquipmentComponent* EquipComp, UBGInteractionComponent* InterComp);
-
-protected:
-    virtual void NativeConstruct() override;
-
-    // 델리게이트 핸들러: 컴포넌트의 OnChanged에 바인딩
-    UFUNCTION() void RefreshInventorySlots();
-    UFUNCTION() void RefreshEquipmentSlots();
-    UFUNCTION() void RefreshNearbyItems(const TArray<FBGNearbyItem>& Items);
-
-    // 드래그 앤 드롭: 인벤토리 슬롯 → 화면 밖 = 버리기
-    // UMG의 OnDrop / NativeOnDragDetected 오버라이드
-};
-```
-
-#### `UBGInventorySlotWidget` (개별 슬롯)
-
-```cpp
-UCLASS()
-class UBGInventorySlotWidget : public UUserWidget
-{
-    GENERATED_BODY()
-
-public:
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UImage> ItemIcon;
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> CountText;
-
-    // 슬롯 데이터 설정
-    void SetSlotData(const FBGInventorySlot& SlotData, const FBGItemRow* ItemRow);
-    void SetEmpty();
-
-    // 이 슬롯의 인덱스 (드래그/드롭, 버리기에 사용)
-    int32 SlotIndex = INDEX_NONE;
-
-protected:
-    // 드래그 시작: NativeOnDragDetected
-    // 클릭: 아이템 사용 (소모품) 또는 장착 (장비)
-};
-```
-
-#### `UBGNearbyItemWidget` (주변 아이템 항목)
-
-```cpp
-UCLASS()
-class UBGNearbyItemWidget : public UUserWidget
-{
-    GENERATED_BODY()
-
-public:
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UImage> ItemIcon;
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> ItemName;
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> CountText;
-
-    void SetItemData(const FBGNearbyItem& NearbyItem, const FBGItemRow* ItemRow);
-
-    // 클릭 시 → InteractionComp->Server_PickupItem(ItemActor)
-    TWeakObjectPtr<AActor> BoundItemActor;
-};
-```
-
-#### `UBGQuickSlotWidget` (퀵슬롯 HUD)
-
-```cpp
-UCLASS()
-class UBGQuickSlotWidget : public UUserWidget
-{
-    GENERATED_BODY()
-
-public:
-    // 무기 슬롯 5개 표시
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UHorizontalBox> WeaponSlotBox;
-
-    // 소모품 퀵슬롯 (회복 아이템 등)
-    UPROPERTY(meta = (BindWidget)) TObjectPtr<UHorizontalBox> ConsumableSlotBox;
-
-    // 현재 선택된 무기 슬롯 하이라이트
-    UPROPERTY(BlueprintReadOnly) EBGWeaponSlot ActiveWeaponSlot = EBGWeaponSlot::None;
-
-    void SetOwnerComponents(UBGEquipmentComponent* EquipComp, UBGInventoryComponent* InvComp);
-
-protected:
-    virtual void NativeConstruct() override;
-
-    UFUNCTION() void RefreshWeaponSlots();
-    UFUNCTION() void RefreshConsumableSlots();
-};
-```
-
-**UI 흐름**:
-
-```
-[Tab 키 누름]
-├── PlayerController → InventoryWidget->SetVisibility(Toggle)
-├── 열릴 때: SetInputMode(GameAndUI), bShowMouseCursor = true
-└── 닫힐 때: SetInputMode(GameOnly), bShowMouseCursor = false
-
-[인벤토리 아이템 드래그 → 화면 밖]
-├── NativeOnDrop 감지
-└── InventoryComp->Server_DropItem(SlotIndex, Count)
-
-[주변 아이템 클릭]
-└── InteractionComp->Server_PickupItem(ItemActor)
-
-[퀵슬롯 HUD]
-├── 항상 표시
-├── EquipmentComp::OnWeaponSlotChanged → RefreshWeaponSlots()
-└── InventoryComp::OnInventoryChanged → RefreshConsumableSlots()
-```
-
-### 11. 컴포넌트 간 의존 관계
-
-```
-UBGInventoryComponent
-  ├── IBGInventoryInterface 구현 (HealingComponent가 사용)
-  └── DataTable (FBGItemRow)
-
-UBGEquipmentComponent
-  ├──참조──> UBGInventoryComponent (장착/해제 시 아이템 이동)
-  └── DataTable (FBGItemRow)
-
-UBGInteractionComponent
-  ├──참조──> UBGInventoryComponent (줍기 시 AddItem)
-  ├──참조──> UBGEquipmentComponent (장비 자동 장착 TryAutoEquip)
-  └──감지──> ABGPickupItem (월드 액터)
-
-ABGItemSpawnPoint
-  └──스폰──> ABGPickupItem (매치 시작 시)
-
-[피해 적용 주체 - 미정]
-  └──참조──> UBGEquipmentComponent (방어구 피해 감소)
-  └──참조──> UBGHealthComponent (데미지 적용)
-
-UBGHealingComponent
-  └──참조──> IBGInventoryInterface (HasHealItem, ConsumeHealItem)
-
-UI (C++ UserWidget)
-  ├──참조──> UBGInventoryComponent (슬롯 데이터, 델리게이트)
-  ├──참조──> UBGEquipmentComponent (장비 데이터, 델리게이트)
-  └──참조──> UBGInteractionComponent (주변 아이템, 줍기 RPC)
-```
-
-### 12. 네트워크 복제 요약
-
-| 컴포넌트                | 복제 프로퍼티                                           | OnRep 용도                |
-| ----------------------- | ------------------------------------------------------- | ------------------------- |
-| UBGInventoryComponent   | `Slots[]`, `MaxSlotCount`                               | 인벤토리 UI 갱신          |
-| UBGEquipmentComponent   | `HelmetSlot`, `VestSlot`, `BackpackSlot`, `WeaponSlots` | 장비/무기 UI, 캐릭터 외형 |
-| UBGInteractionComponent | 없음 (클라이언트 로컬 스캔)                             | —                         |
-| ABGPickupItem           | `ItemRowName`, `Count`                                  | 월드 아이템 표시          |
-
-### 13. 클래스 다이어그램
-
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│                              ABGCharacter                                 │
-│                                                                           │
-│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐                        │
-│ │ UBGInventory │ │ UBGEquipment │ │ UBGInter-    │                        │
-│ │ Component    │ │ Component    │ │ action Comp  │                        │
-│ │              │ │              │ │              │                        │
-│ │ Slots[]      │ │ HelmetSlot   │ │ NearbyItems  │                        │
-│ │ MaxSlotCount │ │ VestSlot     │ │ DetectRadius │                        │
-│ │              │ │ BackpackSlot │ │              │                        │
-│ │ AddItem()    │ │ WeaponSlots  │ │ Scan()       │                        │
-│ │ RemoveItem() │ │              │ │ PickupClose()│                        │
-│ │ DropItem()   │ │ Equip()      │ │ Server_Pick()│                        │
-│ │ HasHealItem()│ │ TryAutoEquip │ │              │                        │
-│ │              │ │ ArmorReduce()│ │              │                        │
-│ └──────────────┘ └──────────────┘ └──────────────┘                        │
-│                                                                           │
-│ ┌─ 기존 Health 시스템 ────────────────────────────────────────────────┐   │
-│ │ UBGHealthComp / UBGBoostComp / UBGHealingComp / UBGDBNOComp        │   │
-│ └────────────────────────────────────────────────────────────────────┘   │
-└───────────────────────────────────────────────────────────────────────────┘
-         │ 감지/줍기               │ 스폰
-         v                         v
-┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│ ABGPickupItem   │     │ ABGItemSpawnPoint │     │ UDataTable       │
-│ (월드 액터)     │<────│ (에디터 배치)     │     │ DT_Items         │
-│                 │     │                   │     │ (FBGItemRow)     │
-│ ItemRowName     │     │ SpawnTable[]      │     │                  │
-│ Count           │     │ EmptyChance       │     │ 스택/방어구      │
-│ MeshComp        │     │ SpawnRandomItem() │     │ 아이콘/메시      │
-└─────────────────┘     └──────────────────┘     └──────────────────┘
-
-┌─ UI (C++ UserWidget) ────────────────────────────────────────────┐
-│                                                                   │
-│ ┌──────────────────┐  ┌───────────────────┐  ┌────────────────┐  │
-│ │ UBGInventory     │  │ UBGNearbyItem     │  │ UBGQuickSlot   │  │
-│ │ Widget (Tab)     │  │ Widget            │  │ Widget (HUD)   │  │
-│ │                  │  │                   │  │                │  │
-│ │ SlotGrid         │  │ ItemIcon/Name     │  │ WeaponSlotBox  │  │
-│ │ EquipSlots       │  │ 클릭→줍기         │  │ ConsumableBox  │  │
-│ │ NearbyItemList   │  │                   │  │                │  │
-│ │ 드래그→버리기    │  │                   │  │ 항상 표시      │  │
-│ └──────────────────┘  └───────────────────┘  └────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### 14. 파일 구조
-
-```
-Source/PUBG_HotMode/GEONU/
-├── Public/
-│   ├── Inventory/
-│   │   ├── BGItemRow.h               (FBGItemRow, EBGItemCategory, EBGEquipSlot, EBGWeaponSlot)
-│   │   ├── BGInventoryComponent.h    (슬롯 기반 아이템 보관, IBGInventoryInterface 구현)
-│   │   ├── BGEquipmentComponent.h    (장비 슬롯 + 무기 슬롯, 방어구, 자동 장착)
-│   │   ├── BGInteractionComponent.h  (주변 감지, 줍기, 자동 장착 연동)
-│   │   ├── BGPickupItem.h            (월드 아이템 액터)
-│   │   └── BGItemSpawnPoint.h        (스폰 포인트, 랜덤 아이템 테이블)
-│   └── UI/
-│       ├── BGInventoryWidget.h       (Tab 전체 인벤토리 화면)
-│       ├── BGInventorySlotWidget.h   (개별 슬롯 위젯)
-│       ├── BGNearbyItemWidget.h      (주변 아이템 항목)
-│       └── BGQuickSlotWidget.h       (퀵슬롯 HUD)
-└── Private/
-    ├── Inventory/
-    │   ├── BGInventoryComponent.cpp
-    │   ├── BGEquipmentComponent.cpp
-    │   ├── BGInteractionComponent.cpp
-    │   ├── BGPickupItem.cpp
-    │   └── BGItemSpawnPoint.cpp
-    └── UI/
-        ├── BGInventoryWidget.cpp
-        ├── BGInventorySlotWidget.cpp
-        ├── BGNearbyItemWidget.cpp
-        └── BGQuickSlotWidget.cpp
-
-Content/GEONU/
-├── Data/
-│   └── DT_Items.uasset              (DataTable — FBGItemRow)
-└── UI/
-    ├── WBP_Inventory.uasset          (UMG — UBGInventoryWidget 기반)
-    ├── WBP_InventorySlot.uasset      (UMG — UBGInventorySlotWidget 기반)
-    ├── WBP_NearbyItem.uasset         (UMG — UBGNearbyItemWidget 기반)
-    └── WBP_QuickSlot.uasset          (UMG — UBGQuickSlotWidget 기반)
-```
-
-### 15. 구현 순서
-
-| 단계 | 작업                                                           | 의존성               |
-| ---- | -------------------------------------------------------------- | -------------------- |
-| 1    | `BGItemRow.h` — 구조체/열거형 정의                             | 없음                 |
-| 2    | `UBGInventoryComponent` 구현 (슬롯 기반)                       | 단계 1               |
-| 3    | `UBGEquipmentComponent` 구현 (방어구 + 무기 슬롯 + 자동 장착)  | 단계 1, 2            |
-| 4    | `ABGPickupItem` 구현                                           | 단계 1               |
-| 5    | `UBGInteractionComponent` 구현 (감지 + 줍기 + 자동 장착 연동)  | 단계 2, 3, 4         |
-| 6    | `ABGItemSpawnPoint` 구현 (스폰 포인트 + 랜덤 테이블)           | 단계 4               |
-| 7    | `ABGCharacter`에 컴포넌트 등록                                 | 단계 2, 3, 5         |
-| 8    | `DT_Items` DataTable 에셋 생성 (에디터)                        | 단계 1               |
-| 9    | 입력 바인딩 (F키 줍기, Tab 인벤토리, 1~5 무기 선택)            | 단계 7               |
-| 10   | `UBGInventorySlotWidget` — 슬롯 위젯 (C++ + UMG)               | 단계 1               |
-| 11   | `UBGNearbyItemWidget` — 주변 아이템 위젯                       | 단계 1               |
-| 12   | `UBGInventoryWidget` — 전체 인벤토리 화면 (드래그 버리기 포함) | 단계 2, 3, 5, 10, 11 |
-| 13   | `UBGQuickSlotWidget` — 퀵슬롯 HUD                              | 단계 3               |
-| 14   | 아이템 버리기 (`Server_DropItem` → 월드 드롭)                  | 단계 2, 4            |
-| 15   | 레벨에 스폰 포인트 배치 + 테스트                               | 단계 6, 8            |
-| 16   | 통합 테스트 (멀티플레이어)                                     | 전체                 |
+Scope: S
+
+### #2 아이템 데이터 계약
+
+Description: Runtime key인 `EBG_ItemType` + `FGameplayTag`를 기준으로 공통 Row와 타입별 Row를 정의하고, CSV 원본과 DataTable asset의 반복 import 구조를 만든다.
+
+Acceptance:
+- 공통 Row에 표시 정보, `WorldStaticMesh`, weight, stack 정보가 포함됨
+- Ammo, Heal, Boost, Throwable, Weapon, Backpack, Armor 전용 Row가 Spec의 전용 필드를 가짐
+- `Content/GEONU/Data/Source/*.csv`와 `Content/GEONU/Data/Items/*` 이름 규칙이 Spec과 일치함
+
+Verification:
+- Build 성공
+- 샘플 CSV import 후 RowName과 `ItemTag.GetTagName()` 일치 수동 확인
+
+Dependencies: #1 모듈 설정
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_ItemTypes.h`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_ItemDataRow.h`
+- `Content/GEONU/Data/Source/*.csv`
+- `Content/GEONU/Data/Items/*`
+
+Scope: M
+
+### #3 Item Registry Subsystem
+
+Description: `UBG_ItemDataRegistry`를 `UPrimaryDataAsset`으로 구현하고, `UBG_ItemDataRegistrySubsystem`이 AssetManager를 통해 registry를 로드, 캐시, 제공하도록 만든다.
+
+Acceptance:
+- `DA_ItemDataRegistry`가 7개 타입별 DataTable을 참조함
+- server/client 양쪽에서 typed row lookup 가능
+- registry 또는 row 누락 시 error log와 validation failure가 발생함
+
+Verification:
+- Build 성공
+- PIE 시작 로그에서 registry load 성공 확인
+- 잘못된 tag 샘플 조회 시 명시적 error log 확인
+
+Dependencies: #1 모듈 설정, #2 아이템 데이터 계약
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_ItemDataRegistry.h`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_ItemDataRegistry.cpp`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_ItemDataRegistrySubsystem.h`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_ItemDataRegistrySubsystem.cpp`
+- `Content/GEONU/Data/DA_ItemDataRegistry`
+
+Scope: M
+
+### Checkpoint A: 데이터 기반 계약
+
+- #1 모듈 설정, #2 아이템 데이터 계약, #3 Item Registry Subsystem 완료 후 build와 registry load를 먼저 확인
+- 이후 작업은 DataTable 직접 참조 대신 subsystem provider만 사용
+- RowName, `ItemTag`, `ItemType` 불일치가 error log로 드러나는지 확인
+
+### #4 Health Component
+
+Description: Character 소유 `UBG_HealthComponent`를 만들고 HP, death, damage, heal, BoostGauge 기준 상태를 서버 권위로 구현한다.
+
+Acceptance:
+- `CurrentHP`, `MaxHP`, `bIsDead`는 전체 복제, `BoostGauge`는 owner 중심 복제됨
+- `ApplyDamage`, `ApplyHeal`, `AddBoost`, `OnDamaged`, `OnHealthChanged` 경로가 있음
+- null target 또는 invalid state는 silent fail 없이 error log를 남김
+
+Verification:
+- Build 성공
+- Listen/Dedicated PIE에서 damage, heal, boost 값 복제 수동 확인
+
+Dependencies: #1 모듈 설정
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/Health/BG_HealthComponent.h`
+- `Source/PUBG_HotMode/GEONU/Health/BG_HealthComponent.cpp`
+- `Source/PUBG_HotMode/WON/Public/Player/BG_Character.h`
+- `Source/PUBG_HotMode/WON/Private/Player/BG_Character.cpp`
+
+Scope: M
+
+### #5 Health Migration
+
+Description: `ABG_PlayerState`의 Health gameplay state를 제거하고 DamageSystem, Character death state, HealthViewModel을 Character HealthComponent 기준으로 전환한다.
+
+Acceptance:
+- `ABG_PlayerState`에 Health source of truth가 남지 않음
+- `UBG_DamageSystem`이 target Character의 `UBG_HealthComponent`에 damage를 적용함
+- `UBG_HealthViewModel`이 possessed Character 변경 시 component에 rebind됨
+
+Verification:
+- Build 성공
+- Possess, respawn, pawn 변경 시 HUD health 갱신 수동 확인
+
+Dependencies: #4 Health Component
+
+Files likely touched:
+- `Source/PUBG_HotMode/WON/Public/Player/BG_PlayerState.h`
+- `Source/PUBG_HotMode/WON/Private/Player/BG_PlayerState.cpp`
+- `Source/PUBG_HotMode/WON/Public/Combat/BG_DamageSystem.h`
+- `Source/PUBG_HotMode/WON/Private/Combat/BG_DamageSystem.cpp`
+- `Source/PUBG_HotMode/GEONU/BG_HealthViewModel.h`
+- `Source/PUBG_HotMode/GEONU/BG_HealthViewModel.cpp`
+
+Scope: L
+
+### Checkpoint B: Health 기준 상태
+
+- #4 Health Component와 #5 Health Migration 완료 후 Health/Boost source of truth를 안정화
+- DamageSystem, Character death state, Health HUD가 모두 HealthComponent 기준인지 확인
+- Inventory, ItemUse, UI 작업은 HealthComponent public API 기준으로 진행
+
+### #6 Inventory FastArray
+
+Description: owner-only FastArray 기반 일반 인벤토리와 무게 계산을 구현한다. 저장 대상은 Ammo, Heal, Boost, stackable Throwable이며 Weapon과 장착 장비는 제외한다.
+
+Acceptance:
+- `TryAddItem`, `TryRemoveItem`, `CanAddItem`, `GetQuantity`, `SetBackpackWeightBonus`가 서버 기준으로 동작함
+- `MaxStackSize`와 weight limit이 적용되고 초과 시 수용 가능한 수량만 추가됨
+- `InventoryList`, `CurrentWeight`, `MaxWeight`가 owner-only로 복제되고 UI delegate가 발생함
+
+Verification:
+- Build 성공
+- PIE에서 stack add/remove, partial pickup, overweight 거부 수동 확인
+
+Dependencies: #3 Item Registry Subsystem
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_InventoryTypes.h`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_InventoryComponent.h`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_InventoryComponent.cpp`
+- `Source/PUBG_HotMode/WON/Public/Player/BG_Character.h`
+- `Source/PUBG_HotMode/WON/Private/Player/BG_Character.cpp`
+
+Scope: M
+
+### #7 Equipment Component
+
+Description: Primary A/B, Pistol, Melee, Throwable, Helmet, Vest, Backpack 상태를 관리하고 기존 Character weapon state와 최소 변경으로 동기화한다.
+
+Acceptance:
+- Weapon public state는 전체 복제, loaded ammo와 armor durability는 owner 중심 복제됨
+- Backpack 장착, 해제, 교체가 Inventory max weight와 overweight 거부를 반영함
+- Throwable 슬롯은 선택 타입만 보관하고 실제 수량은 Inventory에서 관리함
+
+Verification:
+- Build 성공
+- 2 Client PIE에서 무기/방어구 외형 복제와 owner-only 상세 정보 수동 확인
+
+Dependencies: #3 Item Registry Subsystem, #6 Inventory FastArray
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_EquipmentComponent.h`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_EquipmentComponent.cpp`
+- `Source/PUBG_HotMode/WON/Public/Player/BG_Character.h`
+- `Source/PUBG_HotMode/WON/Private/Player/BG_Character.cpp`
+
+Scope: L
+
+### #8 World Item 흐름
+
+Description: 서버 소유 generic `ABG_WorldItemActor`를 구현하고 pickup/drop 요청을 Inventory 또는 Equipment로 라우팅한다.
+
+Acceptance:
+- WorldItem은 `ItemType`, `ItemTag`, `Quantity`, `WeaponLoadedAmmo`를 복제함
+- pickup은 range, quantity, registry row, slot compatibility를 서버에서 재검증함
+- drop은 state 제거 후 generic World Item을 spawn하고 실패 사유를 owning client에 전달함
+
+Verification:
+- Build 성공
+- Dedicated Server + 2 Client PIE에서 pickup/drop, partial pickup, too far 거부 수동 확인
+
+Dependencies: #6 Inventory FastArray, #7 Equipment Component
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_WorldItemActor.h`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_WorldItemActor.cpp`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_InventoryComponent.cpp`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_EquipmentComponent.cpp`
+- `Content/GEONU/Data/Items/*`
+
+Scope: L
+
+### Checkpoint C: Core Gameplay Loop
+
+- #6 Inventory FastArray, #7 Equipment Component, #8 World Item 흐름 완료 후 pickup, stack, equip, drop을 Dedicated Server에서 먼저 검증
+- 이 시점 이후 UI, reload, item use는 core component API를 변경하지 않는 방식으로 연결
+- owner-only inventory 상태와 remote visual state의 복제 경계를 확인
+
+### #9 Inventory ViewModel
+
+Description: `ABG_PlayerController`에 `UBG_InventoryViewModel`을 두고 possessed Character의 Inventory/Equipment에 bind하여 UI 표시용 RenderData와 request API를 제공한다.
+
+Acceptance:
+- Pawn 변경 시 기존 delegate unbind 후 새 component에 rebind됨
+- Inventory, weight, weapon slots, equipment, nearby item render data가 registry display row 기반으로 구성됨
+- Widget 요청은 ViewModel을 통해 server request로만 전달됨
+
+Verification:
+- Build 성공
+- PIE에서 possess 변경, inventory 변경, failure RPC 수신 시 delegate broadcast 확인
+
+Dependencies: #6 Inventory FastArray, #7 Equipment Component, #8 World Item 흐름
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/UI/BG_InventoryViewModel.h`
+- `Source/PUBG_HotMode/GEONU/UI/BG_InventoryViewModel.cpp`
+- `Source/PUBG_HotMode/WON/Public/Player/BG_PlayerController.h`
+- `Source/PUBG_HotMode/WON/Private/Player/BG_PlayerController.cpp`
+
+Scope: M
+
+### #10 Inventory UI
+
+Description: UMG 중심으로 인벤토리 화면을 만들고, 필요한 입력 라우팅, 탭, 모달, 버튼 영역에 한해 CommonUI 사용 여부를 확정한다.
+
+Acceptance:
+- Inventory, nearby items, weight, weapon slots, Helmet/Vest/Backpack 표시가 ViewModel만 참조함
+- pickup, drop, Backpack unequip, partial drop 요청이 ViewModel API로 연결됨
+- CommonUI 타입을 C++에서 직접 참조하면 Build.cs 모듈 추가가 함께 반영됨
+
+Verification:
+- PIE에서 inventory open/close, 목록 갱신, 실패 메시지 표시 수동 확인
+- C++ CommonUI 참조가 생긴 경우 build 성공
+
+Dependencies: #9 Inventory ViewModel
+
+Files likely touched:
+- `Content/GEONU/UI/WBP_Inventory`
+- `Source/PUBG_HotMode/GEONU/UI/BG_InventoryViewModel.h`
+- `Source/PUBG_HotMode/GEONU/UI/BG_InventoryViewModel.cpp`
+- `Source/PUBG_HotMode/PUBG_HotMode.Build.cs`
+
+Scope: M
+
+### Checkpoint D: UI Contract
+
+- #9 Inventory ViewModel과 #10 Inventory UI 완료 후 Widget이 gameplay state를 직접 변경하지 않는지 점검
+- owner-only 정보가 원격 클라이언트 UI에 노출되지 않는지 Dedicated Server에서 확인
+- ViewModel request API가 reload/use 추가 전에 안정적인지 확인
+
+### #11 Reload 연동
+
+Description: 기존 reload input/action flow를 유지하면서 active weapon slot, weapon row의 `AmmoItemTag`, Inventory ammo quantity를 서버에서 검증해 재장전 완료 시 탄약을 소모한다.
+
+Acceptance:
+- 탄약이 없거나 active weapon이 유효하지 않으면 reload가 시작되지 않음
+- 완료 시점에 weapon, slot, ammo를 재검증하고 `min(Need, Have)`만 차감함
+- weapon switch, fire, death, equipment change, active slot change 시 reload가 취소됨
+
+Verification:
+- Build 성공
+- PIE에서 no ammo reject, partial reload, reload cancel, owner LoadedAmmo HUD 갱신 확인
+
+Dependencies: #6 Inventory FastArray, #7 Equipment Component
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_EquipmentComponent.h`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_EquipmentComponent.cpp`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_InventoryComponent.cpp`
+- 기존 weapon/action flow 관련 WON 파일
+
+Scope: M
+
+### #12 Item Use
+
+Description: `UBG_ItemUseComponent`가 Heal/Boost 사용 요청, 서버 timer, owner progress replication, 완료 재검증, 취소 조건을 처리한다.
+
+Acceptance:
+- Heal/Boost typed row, quantity, death/use state, HealthCap을 서버에서 검증함
+- 완료 시 `TryRemoveItem` 성공 후에만 `ApplyHeal` 또는 `AddBoost`가 적용됨
+- 이동, 피격, 발사, weapon switch, death, explicit cancel 조건에서 사용이 취소됨
+
+Verification:
+- Build 성공
+- PIE에서 item consume, HP restore, BoostGauge 증가, 중복 사용 거부, 취소 조건 확인
+
+Dependencies: #4 Health Component, #6 Inventory FastArray, #9 Inventory ViewModel
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_ItemUseComponent.h`
+- `Source/PUBG_HotMode/GEONU/Inventory/BG_ItemUseComponent.cpp`
+- `Source/PUBG_HotMode/GEONU/Health/BG_HealthComponent.cpp`
+- `Source/PUBG_HotMode/WON/Public/Player/BG_Character.h`
+- `Source/PUBG_HotMode/WON/Private/Player/BG_Character.cpp`
+
+Scope: L
+
+### Checkpoint E: Combat Consumables
+
+- #11 Reload 연동과 #12 Item Use 완료 후 reload와 item use가 서로 취소 조건을 공유하는지 점검
+- Inventory 수량, weapon ammo, Health/Boost가 서버 기준으로 일치하는지 확인
+- failure reason이 요청 owning client에만 전달되는지 확인
+
+### #13 Boost 후순위 효과
+
+Description: 1차 성공 기준 이후 BoostGauge decay, 자동 HP 회복, 속도 보정을 별도 slice로 구현한다.
+
+Acceptance:
+- BoostGauge 구간별 decay와 자동 HP 회복 규칙이 Data/Config 또는 명시 상수로 분리됨
+- 속도 보정은 Character movement와 충돌 없이 서버 기준으로 적용/복제됨
+- Boost 1차 기능을 끄거나 변경하지 않고 확장됨
+
+Verification:
+- Build 성공
+- PIE에서 시간 경과 decay, 자동 회복, 속도 보정 on/off 수동 확인
+
+Dependencies: #4 Health Component, #12 Item Use
+
+Files likely touched:
+- `Source/PUBG_HotMode/GEONU/Health/BG_HealthComponent.h`
+- `Source/PUBG_HotMode/GEONU/Health/BG_HealthComponent.cpp`
+- `Source/PUBG_HotMode/WON/Public/Player/BG_Character.h`
+- `Source/PUBG_HotMode/WON/Private/Player/BG_Character.cpp`
+
+Scope: M
+
+### #14 최종 검증
+
+Description: 모든 핵심 flow를 Dedicated Server + 2 Clients에서 검증하고, 실패 사유와 owner-only 복제 경계를 확인한다.
+
+Acceptance:
+- pickup, stack, drop, equip, unequip, reload, use가 서버 검증 기반으로 통과함
+- owner inventory, weight, ammo, durability, Boost 정보가 원격 클라이언트에 노출되지 않음
+- 원격 클라이언트에서 weapon, armor, world item 외형 상태가 일관되게 보임
+
+Verification:
+- Dedicated Server + 2 Clients PIE
+- build 명령 재실행
+- 테스트 체크리스트 전 항목 수동 기록
+
+Dependencies: #1 모듈 설정부터 #12 Item Use까지의 핵심 작업, #13 Boost 후순위 효과는 후순위 효과 검증 시에만 필요
+
+Files likely touched:
+- `Docs/Plan-InventorySystem.md`
+- 필요 시 검증 기록 문서
+
+Scope: S
+
+## 테스트 체크리스트
+
+### 데이터와 Registry
+
+- [ ] GameplayTag 등록 확인
+- [ ] DataTable RowName과 `ItemTag.GetTagName()` 일치 확인
+- [ ] registry load 성공 로그 확인
+- [ ] invalid row lookup error log 확인
+
+### Health
+
+- [ ] 데미지 적용 시 `CurrentHP` 감소
+- [ ] HP 0 도달 시 `bIsDead` true
+- [ ] `UBG_HealthViewModel`이 HealthComponent 변경을 수신
+- [ ] 피격 delegate가 ItemUse 취소에 연결
+
+### Inventory
+
+- [ ] 같은 아이템 추가 시 기존 스택 우선 증가
+- [ ] `MaxStackSize` 초과 시 새 엔트리 생성
+- [ ] 무게 초과 시 일부 수량만 추가
+- [ ] `CurrentWeight`와 `MaxWeight`가 owner UI에 갱신
+
+### Equipment
+
+- [ ] Primary A/B에 weapon 장착
+- [ ] slot mismatch 장착 거부
+- [ ] Helmet/Vest 독립 장착
+- [ ] Backpack 장착 시 `MaxWeight` 증가
+- [ ] Backpack 해제 시 초과 무게면 거부
+
+### World Item
+
+- [ ] 거리 밖 pickup 거부
+- [ ] 잘못된 `ItemType`, `ItemTag` pickup 거부
+- [ ] 부분 pickup 후 WorldItem 수량 감소
+- [ ] 전체 pickup 후 WorldItem 제거
+- [ ] drop 후 WorldItem 생성
+
+### Reload
+
+- [ ] 탄약 없을 때 reload 거부
+- [ ] reload 완료 시 `min(Need, Have)`만 차감
+- [ ] reload 중 weapon switch 시 취소
+- [ ] 완료 시점에 탄약이 사라졌으면 loaded ammo 증가 없음
+
+### Item Use
+
+- [ ] HP가 HealCap 이상이면 heal item 사용 거부
+- [ ] 사용 중 재사용 거부
+- [ ] 이동, 피격, 발사, weapon switch, death 시 취소
+- [ ] 완료 전에 아이템이 사라지면 효과 미적용
+- [ ] 완료 시 item 1개 소모 후 HP/Boost 적용
+
+### UI
+
+- [ ] Widget이 ViewModel 없이 gameplay 객체를 직접 변경하지 않음
+- [ ] Inventory, weight, equipment 변경 시 UI 갱신
+- [ ] 서버 실패 사유가 요청 client에 표시
+- [ ] 다른 client의 owner-only 정보가 표시되지 않음
+
+## 남은 리스크
+
+- Health migration은 기존 PlayerState 의존 코드가 숨어 있으면 컴파일 이후 런타임에서 드러날 수 있음
+- AssetManager 설정은 editor asset 생성 절차와 config가 어긋나면 packaged 환경에서 registry load 실패 가능
+- Backpack 해제/교체는 Inventory와 Equipment state mutation 순서가 잘못되면 아이템 유실 또는 중복 spawn 위험
+- Reload와 ItemUse 취소 조건은 기존 weapon/action state와 이벤트 순서가 달라질 수 있음
+- CommonUI 입력 라우팅은 기존 Enhanced Input과 충돌할 수 있으므로 UI task에서 별도 수동 검증 필요

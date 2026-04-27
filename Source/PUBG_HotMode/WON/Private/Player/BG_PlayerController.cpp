@@ -3,6 +3,9 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
+#include "InputCoreTypes.h"
+#include "BG_PlayerHealthViewModel.h"
+#include "Player/BG_PlayerState.h"
 #include "Player/BG_Character.h"
 
 namespace
@@ -35,10 +38,24 @@ namespace
 	}
 }
 
+ABG_PlayerController::ABG_PlayerController()
+{
+	HUDViewModel = CreateDefaultSubobject<UBG_PlayerHealthViewModel>(TEXT("HUDViewModel"));
+}
+
 void ABG_PlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 	RefreshMappingContext();
+
+	if (HUDViewModel)
+	{
+		HUDViewModel->NotifyPlayerStateReady(GetPlayerState<ABG_PlayerState>());
+		if (ABG_Character* BGCharacter = GetBGCharacter())
+		{
+			HUDViewModel->NotifyCombatReady(BGCharacter);
+		}
+	}
 }
 
 void ABG_PlayerController::OnPossess(APawn* InPawn)
@@ -46,6 +63,12 @@ void ABG_PlayerController::OnPossess(APawn* InPawn)
 	Super::OnPossess(InPawn);
 	RefreshMappingContext();
 	BindPawnInput();
+
+	if (HUDViewModel)
+	{
+		HUDViewModel->NotifyPlayerStateReady(GetPlayerState<ABG_PlayerState>());
+		HUDViewModel->NotifyCombatReady(GetBGCharacter());
+	}
 }
 
 void ABG_PlayerController::SetupInputComponent()
@@ -59,6 +82,12 @@ void ABG_PlayerController::SetPawn(APawn* InPawn)
 	Super::SetPawn(InPawn);
 	RefreshMappingContext();
 	BindPawnInput();
+
+	if (HUDViewModel)
+	{
+		HUDViewModel->NotifyPlayerStateReady(GetPlayerState<ABG_PlayerState>());
+		HUDViewModel->NotifyCombatReady(GetBGCharacter());
+	}
 }
 
 void ABG_PlayerController::RefreshMappingContext()
@@ -88,6 +117,7 @@ void ABG_PlayerController::BindPawnInput()
 {
 	UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent);
 	ABG_Character* BGCharacter = GetBGCharacter();
+	
 
 	if (!EnhancedInputComponent)
 	{
@@ -127,6 +157,13 @@ void ABG_PlayerController::BindPawnInput()
 
 	BindStartedIfValid(EnhancedInputComponent, InputConfig.AimAction.Get(), this, &ABG_PlayerController::OnAimInputStarted);
 	BindCompletedIfValid(EnhancedInputComponent, InputConfig.AimAction.Get(), this, &ABG_PlayerController::OnAimInputCompleted);
+
+	// 상호작용 키
+	BindStartedIfValid(EnhancedInputComponent, InputConfig.InteractAction.Get(), this, &ABG_PlayerController::OnInteractInputStarted);
+	
+	InputComponent->BindKey(EKeys::One, IE_Pressed, this, &ABG_PlayerController::OnEquipPistolInputStarted);
+	InputComponent->BindKey(EKeys::Two, IE_Pressed, this, &ABG_PlayerController::OnEquipRifleInputStarted);
+	InputComponent->BindKey(EKeys::Zero, IE_Pressed, this, &ABG_PlayerController::OnUnequipWeaponInputStarted);
 
 	LastBoundCharacter = BGCharacter;
 	LastBoundInputComponent = InputComponent;
@@ -173,6 +210,45 @@ void ABG_PlayerController::OnAttackInputStarted()
 	}
 
 	UE_LOG(LogTemp, Error, TEXT("%s: OnAttackInputStarted failed because controlled character was null."), *GetNameSafe(this));
+}
+
+void ABG_PlayerController::OnEquipPistolInputStarted()
+{
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		// 임시 장착 입력이다. 나중에 인벤토리/아이템 연동이 들어오면 여기만 교체하면 된다.
+		BGCharacter->SetWeaponState(EBGWeaponPoseType::Pistol, true);
+		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip switched to Pistol."), *GetNameSafe(this));
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnEquipPistolInputStarted failed because controlled character was null."), *GetNameSafe(this));
+}
+
+void ABG_PlayerController::OnEquipRifleInputStarted()
+{
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		// 임시 장착 입력이다. 나중에 인벤토리/아이템 연동이 들어오면 여기만 교체하면 된다.
+		BGCharacter->SetWeaponState(EBGWeaponPoseType::Rifle, true);
+		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip switched to Rifle."), *GetNameSafe(this));
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnEquipRifleInputStarted failed because controlled character was null."), *GetNameSafe(this));
+}
+
+void ABG_PlayerController::OnUnequipWeaponInputStarted()
+{
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		// 임시 해제 입력이다. 최종 인벤토리 시스템이 오면 장착 상태는 그쪽이 관리한다.
+		BGCharacter->SetWeaponState(EBGWeaponPoseType::None, false);
+		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip cleared."), *GetNameSafe(this));
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnUnequipWeaponInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnCrouchInputStarted()
@@ -243,7 +319,7 @@ void ABG_PlayerController::OnLeanRightInputCompleted()
 
 void ABG_PlayerController::OnAimInputStarted()
 {
-	if (ABG_Character* BGCharacter = GetBGCharacter())
+	if (ABG_Character* BGCharacter = GetBGCharacter()) 
 	{
 		BGCharacter->StartAimFromInput();
 		return;
@@ -262,6 +338,14 @@ void ABG_PlayerController::OnAimInputCompleted()
 
 	UE_LOG(LogTemp, Error, TEXT("%s: OnAimInputCompleted failed because controlled character was null."), *GetNameSafe(this));
 }
+
+void ABG_PlayerController::OnInteractInputStarted()
+{
+	if (ABG_Character* BGChar = GetBGCharacter()) {
+		BGChar->OnParachuteAction(); 
+	}
+}
+
 
 ABG_Character* ABG_PlayerController::GetBGCharacter() const
 {

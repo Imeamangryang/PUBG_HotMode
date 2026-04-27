@@ -1,5 +1,7 @@
 #include "Player/BG_Character.h"
 #include "Combat/BG_DamageSystem.h"
+#include "Combat/BG_HealthComponent.h"
+#include "Combat/BG_WeaponFireComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -7,6 +9,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "Character/Components/ParkourComponent.h"
 
 DEFINE_LOG_CATEGORY(LogBGCharacter);
 
@@ -17,7 +20,7 @@ ABG_Character::ABG_Character()
 
 	bUseControllerRotationYaw = false;
 	GetCharacterMovement()->bOrientRotationToMovement = true;
-
+	
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
 	CameraBoom->TargetArmLength = 400.0f;
@@ -27,9 +30,14 @@ ABG_Character::ABG_Character()
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 
 	DamageSystem = CreateDefaultSubobject<UBG_DamageSystem>(TEXT("DamageSystem"));
+	HealthComponent = CreateDefaultSubobject<UBG_HealthComponent>(TEXT("HealthComponent"));
+	WeaponFireComponent = CreateDefaultSubobject<UBG_WeaponFireComponent>(TEXT("WeaponFireComponent"));
 
 	WeaponAttachPoint = CreateDefaultSubobject<USceneComponent>(TEXT("WeaponAttachPoint"));
 	WeaponAttachPoint->SetupAttachment(GetMesh());
+	
+	// 파쿠르 컴포넌트
+	ParkourComponent = CreateDefaultSubobject<UParkourComponent>(TEXT("ParkourComponent"));
 
 	bIsWeaponEquipped = false;
 	EquippedWeaponPoseType = EBGWeaponPoseType::None;
@@ -72,7 +80,7 @@ void ABG_Character::Tick(float DeltaSeconds)
 	{
 		UE_LOG(LogBGCharacter, Error, TEXT("%s: Tick failed because CharacterMovement was null."), *GetNameSafe(this));
 		bIsFalling = false;
-		bIsAcceleration = false;
+		bIsAcceleration = false; 
 	}
 
 	UpdateDerivedState();
@@ -111,7 +119,14 @@ void ABG_Character::LookFromInput(const FInputActionValue& Value)
 
 void ABG_Character::StartJumpFromInput()
 {
-	Jump();
+	if (ParkourComponent)
+	{
+		ParkourComponent -> TryParkour();
+	}
+	else
+	{
+		return;
+	}
 }
 
 void ABG_Character::StopJumpFromInput()
@@ -232,7 +247,31 @@ void ABG_Character::StopLeanRightFromInput()
 
 void ABG_Character::Req_PrimaryAction()
 {
-	if (bIsWeaponEquipped) return;
+	// 총이 장착되어 있으면 근접 공격 대신 발사 경로로 보낸다.
+	if (bIsWeaponEquipped)
+	{
+		if (!bCanFire)
+		{
+			UE_LOG(LogBGCharacter, Error, TEXT("%s: Req_PrimaryAction failed because firing is blocked by character state."), *GetNameSafe(this));
+			return;
+		}
+
+		if (!WeaponFireComponent)
+		{
+			UE_LOG(LogBGCharacter, Error, TEXT("%s: Req_PrimaryAction failed because WeaponFireComponent was null."), *GetNameSafe(this));
+			return;
+		}
+
+		WeaponFireComponent->RequestFire();
+		return;
+	}
+
+	if (!bCanUseMeleeAttack)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: Req_PrimaryAction failed because melee attack is blocked by character state."), *GetNameSafe(this));
+		return;
+	}
+
 	if (!GetWorld())
 	{
 		UE_LOG(LogBGCharacter, Error, TEXT("%s: Req_PrimaryAction failed because World was null."), *GetNameSafe(this));
@@ -322,8 +361,85 @@ void ABG_Character::ProcessMeleeHitDetection()
 	}
 }
 
+
+
+bool ABG_Character::IsDeadState_Implementation()
+{
+	return bIsDead;
+}
+
+bool ABG_Character::CanFire_Implementation()
+{
+	return bCanFire;
+}
+
+bool ABG_Character::CanLean_Implementation()
+{
+	return bCanLean;
+}
+
+bool ABG_Character::IsCrouchingState_Implementation()
+{
+	return bIsCrouchingState;
+}
+
+bool ABG_Character::CanEnterCrouch_Implementation()
+{
+	return bCanEnterCrouch;
+}
+
+bool ABG_Character::IsProneState_Implementation()
+{
+	return bIsProne;
+}
+
+bool ABG_Character::CanEnterProne_Implementation()
+{
+	return bCanEnterProne;
+}
+
+bool ABG_Character::IsReloading_Implementation()
+{
+	return bIsReloading;
+}
+
+bool ABG_Character::CanReload_Implementation()
+{	
+	return bCanReload;
+}
+
+bool ABG_Character::CanAim_Implementation()
+{
+	return bCanAim;
+}
+
+bool ABG_Character::IsAiming_Implementation()
+{
+	return bIsAiming;
+}
+
+
+void ABG_Character::OnParachuteAction_Implementation()
+{
+	// 공중이고(bIsFalling), 낙하산을 가지고 있다면(bHasParachute)
+	if (bIsFalling && bHasParachute && !bIsParachuteOpen)
+	{
+		bIsParachuteOpen = true;
+		bHasParachute = false; // 한 번 펴면 소모됨
+        
+		// 낙하산이 펴지면 하강 속도를 물리적으로 제한
+		GetCharacterMovement()->AirControl = 1.0f; // 공중 제어력 증가
+		GetCharacterMovement()->GravityScale = 0.1f; // 천천히 떨어짐
+	}
+}
+
 void ABG_Character::SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped)
 {
+	if (!HasAuthority())
+	{
+		Server_SetWeaponState(NewWeaponPoseType, bNewWeaponEquipped);
+	}
+
 	EquippedWeaponPoseType = NewWeaponPoseType;
 	bIsWeaponEquipped = bNewWeaponEquipped && NewWeaponPoseType != EBGWeaponPoseType::None;
 
@@ -333,9 +449,28 @@ void ABG_Character::SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNe
 		EquippedWeaponPoseType = EBGWeaponPoseType::None;
 	}
 
+	if (WeaponFireComponent)
+	{
+		WeaponFireComponent->ApplyTemporaryWeaponProfile(EquippedWeaponPoseType);
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: SetWeaponState failed because WeaponFireComponent was null."), *GetNameSafe(this));
+	}
+
 	UpdateDerivedState();
 	ApplyWeaponMovementState();
 	OnRep_EquippedWeaponPoseType();
+}
+
+void ABG_Character::Server_SetWeaponState_Implementation(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped)
+{
+	SetWeaponState(NewWeaponPoseType, bNewWeaponEquipped);
+}
+
+bool ABG_Character::Server_SetWeaponState_Validate(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped)
+{
+	return true;
 }
 
 void ABG_Character::SetCurrentInteractableWeapon(AActor* NewInteractableWeapon)
@@ -346,6 +481,15 @@ void ABG_Character::SetCurrentInteractableWeapon(AActor* NewInteractableWeapon)
 
 void ABG_Character::OnRep_EquippedWeaponPoseType()
 {
+	if (WeaponFireComponent)
+	{
+		WeaponFireComponent->ApplyTemporaryWeaponProfile(EquippedWeaponPoseType);
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: OnRep_EquippedWeaponPoseType failed because WeaponFireComponent was null."), *GetNameSafe(this));
+	}
+
 	UpdateDerivedState();
 	ApplyWeaponMovementState();
 }

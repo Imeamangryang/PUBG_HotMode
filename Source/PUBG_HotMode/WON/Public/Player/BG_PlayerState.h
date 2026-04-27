@@ -32,6 +32,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat")
 	bool ApplyDamage(float DamageAmount);
 
+	// 캐릭터 공통 HP 컴포넌트가 서버에서 계산한 값을 PlayerState로 복사할 때 사용한다.
+	UFUNCTION(BlueprintCallable, Category = "Combat")
+	void SetHealthSnapshot(float NewCurrentHP, bool bNewIsDead, float NewMaxHP);
+
 	UFUNCTION(BlueprintPure, Category = "Combat")
 	bool IsDead() const { return bIsDead; }
 
@@ -52,4 +56,4 @@ protected:
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 };
- 
+  

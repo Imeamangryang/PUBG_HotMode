@@ -1,18 +1,18 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-#include "BG_PlayerHealthViewModel.h"
+#include "BG_HealthViewModel.h"
 #include "Player/BG_PlayerState.h"
 #include "GameFramework/PlayerController.h"
 #include "PUBG_HotMode/PUBG_HotMode.h"
 
 // --- Lifecycle ------------
 
-UBG_PlayerHealthViewModel::UBG_PlayerHealthViewModel()
+UBG_HealthViewModel::UBG_HealthViewModel()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 }
 
-void UBG_PlayerHealthViewModel::BeginPlay()
+void UBG_HealthViewModel::BeginPlay()
 {
 	Super::BeginPlay();
 
@@ -32,20 +32,20 @@ void UBG_PlayerHealthViewModel::BeginPlay()
 	}
 }
 
-void UBG_PlayerHealthViewModel::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void UBG_HealthViewModel::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	UnbindFromPlayerState();
 	Super::EndPlay(EndPlayReason);
 }
 
-void UBG_PlayerHealthViewModel::NotifyPlayerStateReady(ABG_PlayerState* InPS)
+void UBG_HealthViewModel::NotifyPlayerStateReady(ABG_PlayerState* InPS)
 {
 	BindToPlayerState(InPS);
 }
 
 // --- Public API ------------
 
-void UBG_PlayerHealthViewModel::ForceUpdateAllAttributes()
+void UBG_HealthViewModel::ForceUpdateAllAttributes()
 {
 	OnHealthChanged.Broadcast(HealthPercent, bIsDead);
 	OnBoostChanged.Broadcast(BoostPercent);
@@ -60,7 +60,7 @@ void UBG_PlayerHealthViewModel::ForceUpdateAllAttributes()
 
 // --- Binding ------------
 
-void UBG_PlayerHealthViewModel::BindToPlayerState(ABG_PlayerState* InPS)
+void UBG_HealthViewModel::BindToPlayerState(ABG_PlayerState* InPS)
 {
 	auto* PC = Cast<APlayerController>(GetOwner());
 	if (!PC)
@@ -98,24 +98,24 @@ void UBG_PlayerHealthViewModel::BindToPlayerState(ABG_PlayerState* InPS)
 	UnbindFromPlayerState();
 
 	BoundedPlayerState = InPS;
-	InPS->OnHealthChanged.AddDynamic(this, &UBG_PlayerHealthViewModel::ReceiveHealthChanged);
+	InPS->OnHealthChanged.AddDynamic(this, &UBG_HealthViewModel::ReceiveHealthChanged);
 
 	// Push initial values
 	ForceUpdateAllAttributes();
 }
 
-void UBG_PlayerHealthViewModel::UnbindFromPlayerState()
+void UBG_HealthViewModel::UnbindFromPlayerState()
 {
 	if (ABG_PlayerState* PS = BoundedPlayerState.Get())
 	{
-		PS->OnHealthChanged.RemoveDynamic(this, &UBG_PlayerHealthViewModel::ReceiveHealthChanged);
+		PS->OnHealthChanged.RemoveDynamic(this, &UBG_HealthViewModel::ReceiveHealthChanged);
 	}
 	BoundedPlayerState = nullptr;
 }
 
 // --- Event handlers ------------
 
-void UBG_PlayerHealthViewModel::ReceiveHealthChanged(float NewHealth, float MaxHealth, bool bNewIsDead)
+void UBG_HealthViewModel::ReceiveHealthChanged(float NewHealth, float MaxHealth, bool bNewIsDead)
 {
 	float NewPercent = 0.f;
 	if (MaxHealth > 0.f)

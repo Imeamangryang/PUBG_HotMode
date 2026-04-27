@@ -9,9 +9,12 @@
 class USpringArmComponent;
 class UCameraComponent;
 class UBG_DamageSystem;
+class UBG_HealthComponent;
+class UBG_WeaponFireComponent;
 class UAnimMontage;
 class USceneComponent;
 class AActor;
+class UParkourComponent;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogBGCharacter, Log, All);
 
@@ -153,8 +156,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	bool IsWeaponEquipped() const { return bIsWeaponEquipped; }
 
-	UFUNCTION(BlueprintPure, Category = "Weapon")
-	bool IsAiming() const { return bIsAiming; }
+	UFUNCTION(BlueprintNativeEvent, Category = "Weapon")
+	bool IsAiming();
 
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	EBGWeaponPoseType GetEquippedWeaponPoseType() const { return EquippedWeaponPoseType; }
@@ -162,35 +165,48 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	AActor* GetCurrentInteractableWeapon() const { return CurrentInteractableWeapon; }
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool CanAim() const { return bCanAim; }
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool CanAim();
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool CanReload() const { return bCanReload; }
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool CanReload();
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool IsReloading() const { return bIsReloading; }
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool IsReloading();
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool CanEnterProne() const { return bCanEnterProne; }
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool CanEnterProne();
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool IsProneState() const { return bIsProne; }
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool IsProneState();
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool CanEnterCrouch() const { return bCanEnterCrouch; }
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool CanEnterCrouch();
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool IsCrouchingState() const { return bIsCrouchingState; }
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool IsCrouchingState();
+	
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool CanLean();
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool CanLean() const { return bCanLean; }
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool CanFire();
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool CanFire() const { return bCanFire; }
+	UFUNCTION(BlueprintNativeEvent, Category = "State")
+	bool IsDeadState();
+	
+	// 낙하산 보유 여부
+	// --- ABG_Character.h ---
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State|Parachute")
+	bool bHasParachute = true; // 시작할 때 가지고 있다고 가정
 
-	UFUNCTION(BlueprintPure, Category = "State")
-	bool IsDeadState() const { return bIsDead; }
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "State|Parachute")
+	bool bIsParachuteOpen = false;
+
+	// 상호작용으로 호출될 함수
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "State|Parachute")
+	void OnParachuteAction();
 
 	UFUNCTION(BlueprintPure, Category = "State")
 	EBGCharacterState GetCharacterState() const { return CharacterState; }
@@ -203,6 +219,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Weapon")
 	void SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped);
 
 	UFUNCTION(BlueprintCallable, Category = "Weapon")
 	void SetCurrentInteractableWeapon(AActor* NewInteractableWeapon);
@@ -222,8 +241,18 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBG_DamageSystem> DamageSystem;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UBG_HealthComponent> HealthComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UBG_WeaponFireComponent> WeaponFireComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> WeaponAttachPoint;
+	
+	//파쿠르 시스템
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Parkour", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UParkourComponent> ParkourComponent;
 
 public:
 	/** 공격 설정 */
@@ -231,7 +260,7 @@ public:
 	TObjectPtr<UAnimMontage> MeleePunchMontage;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Combat|Melee")
-	float MeleeDamage = 20.f;
+	float MeleeDamage = 10.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Combat|Melee")
 	float MeleeRange = 150.f;
@@ -246,7 +275,7 @@ public:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "Combat")
 	bool bIsWeaponEquipped = false;
-
+ 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_EquippedWeaponPoseType, Category = "Weapon")
 	EBGWeaponPoseType EquippedWeaponPoseType = EBGWeaponPoseType::None;
 
@@ -256,8 +285,10 @@ public:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Weapon")
 	TObjectPtr<AActor> CurrentInteractableWeapon = nullptr;
 
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Weapon")
-	TArray<TObjectPtr<AActor>> NearbyWeapons;
+	//UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Weapon")
+	//TArray<TObjectPtr<AActor>> NearbyWeapons;
+	
+	
 	
 	virtual void Tick(float DeltaSeconds) override;
 };
