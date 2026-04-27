@@ -63,3 +63,78 @@
 
 - 블루존 시작 및 타이머: 서버에서 블루존 시작 시점을 관리하고, 클라이언트에 남은 시간과 위치 정보를 전달.
 
+---
+
+# Milestone 1 - 로비 입장과 서버 전환 기반
+
+- Dedicated Server 자동 접속
+- Lobby GameMode / GameState / PlayerState 구축
+- 플레이어 리스트 표시
+- 팀 배정 기본 구조
+
+# Milestone 2 - 팀 시스템과 Start
+
+- 팀 이동/구성 (최대 4인 팀/ 일단 개인전 형태로 시작)
+- Start 버튼 서버 처리
+- Seamless Travel
+- BattleMap 진입 성공
+
+# Milestone 3 - 프리매치
+
+- 배틀맵 60초 타이머
+- 스폰 및 Possess
+- UI 타이머 표시
+
+# Milestone 4 - 비행기/드랍
+
+- 비행기 이동 (배틀맵의 하늘을 가로지르는 경로)
+- 카메라 전환 (캐릭터가 비행기에 탑승한 시점으로 전환)
+- F 드랍 (F 키 입력시 플레이어 낙하 위치로 스폰 및 낙하 시작)
+- 낙하산 전개
+
+# Milestone 5 - 전투 종료 루프
+
+- 생존 판정
+- 승리 팀 판정
+- 결과 화면
+- 블루존
+
+
+---
+
+# 우선순위 기준 실제 구현 순서
+
+1. GameState / MatchState 설계
+2. Lobby GameMode + 플레이어 리스트
+3. 팀 시스템 (일단 개인전 형태로 시작 / 추후 추가)
+4. Start + Seamless Travel
+5. BattleMap 입장 + 60초 프리매치
+6. 비행기
+7. 낙하 / 낙하산
+8. 승리 판정
+9. 블루존
+10. 결과 UI / 복귀 루프
+
+
+---
+
+- MatchState 정의
+- Lobby ↔ Battle 상태 전환
+- Seamless Travel
+- 승리 조건 판별
+- 접속자 목록 동기화
+- 팀 생성/이동/관리
+- Start 요청 처리
+- 배틀맵 입장
+- 60초 대기
+- 스폰/포제스 관리
+- 비행기 경로
+- 카메라 전환
+- 드랍 시작
+- 낙하산 오픈
+- 블루존 타이머
+- 생존자 집계
+- 승리/종료 처리
+
+PlayerState, PlayerController, PlayerCharacter 등의 수정은 다른 팀원과 협의 후 
+진행해야함으로 우선은 GameState와 GameMode 중심으로 시스템을 구축하는 것을 목표로 함.

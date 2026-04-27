@@ -1,0 +1,34 @@
+﻿#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/PlayerController.h"
+#include "BG_LobbyPlayerController.generated.h"
+
+UCLASS()
+class PUBG_HOTMODE_API ABG_LobbyPlayerController : public APlayerController
+{
+	GENERATED_BODY()
+
+public:
+	ABG_LobbyPlayerController();
+
+protected:
+	virtual void BeginPlay() override;
+
+public:
+	UFUNCTION(BlueprintCallable, Category = "BG|Lobby")
+	void RequestStartGame();
+
+	UFUNCTION(Server, Reliable)
+	void Server_RequestStartGame();
+
+	UFUNCTION(BlueprintCallable, Category = "BG|Lobby")
+	void ShowLobbyUI();
+
+protected:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BG|LobbyUI")
+	TSubclassOf<class UUserWidget> LobbyWidgetClass;
+
+	UPROPERTY()
+	class UUserWidget* LobbyWidgetInstance;
+};

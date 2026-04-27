@@ -5,7 +5,7 @@
 #include "BG_PlayerController.generated.h"
 
 class ABG_Character;
-class UBG_PlayerHealthViewModel;
+class UBG_HealthViewModel;
 class UInputAction;
 class UInputMappingContext;
 struct FInputActionValue;
@@ -62,7 +62,7 @@ public:
 	virtual void BeginPlay() override;
 	virtual void OnPossess(APawn* InPawn) override;
 
-	UBG_PlayerHealthViewModel* GetHUDViewModel() const { return HUDViewModel; }
+	UBG_HealthViewModel* GetHUDViewModel() const { return HUDViewModel; }
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
@@ -101,7 +101,7 @@ private:
 	TObjectPtr<ABG_Character> LastBoundCharacter = nullptr;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HUD", meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UBG_PlayerHealthViewModel> HUDViewModel = nullptr;
+	TObjectPtr<UBG_HealthViewModel> HUDViewModel = nullptr;
 	
 	
 	

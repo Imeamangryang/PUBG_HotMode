@@ -50,6 +50,16 @@ void ABG_Character::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (HealthComponent)
+	{
+		HealthComponent->OnDeathStateChanged.AddDynamic(this, &ABG_Character::HandleHealthDeathStateChanged);
+		HandleHealthDeathStateChanged(HealthComponent->IsDead());
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: BeginPlay failed because HealthComponent was null."), *GetNameSafe(this));
+	}
+
 	// 변수명을 Children에서 ChildComps로 변경하여 충돌 방지
 	if (USkeletalMeshComponent* Body = Cast<USkeletalMeshComponent>(GetDefaultSubobjectByName(TEXT("Body"))))
 	{
@@ -492,6 +502,20 @@ void ABG_Character::OnRep_EquippedWeaponPoseType()
 
 	UpdateDerivedState();
 	ApplyWeaponMovementState();
+}
+
+void ABG_Character::HandleHealthDeathStateChanged(bool bNewIsDead)
+{
+	if (bNewIsDead)
+	{
+		CharacterState = EBGCharacterState::Dead;
+	}
+	else if (CharacterState == EBGCharacterState::Dead)
+	{
+		CharacterState = EBGCharacterState::Idle;
+	}
+
+	UpdateDerivedState();
 }
 
 void ABG_Character::ApplyWeaponMovementState()

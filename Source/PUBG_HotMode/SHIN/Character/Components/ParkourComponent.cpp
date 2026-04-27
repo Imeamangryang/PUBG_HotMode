@@ -9,7 +9,7 @@
 
 UParkourComponent::UParkourComponent()
 {
-    PrimaryComponentTick.bCanEverTick = false;
+    PrimaryComponentTick.bCanEverTick = true;
     SetIsReplicatedByDefault(true);
 }
 
@@ -19,6 +19,19 @@ void UParkourComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
     
     DOREPLIFETIME(UParkourComponent, ParkourState);
     DOREPLIFETIME(UParkourComponent, TargetLocation);
+}
+
+void UParkourComponent::TickComponent(float DeltaTime, ELevelTick TickType,
+    FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    if (!bParkourMoving || ParkourState == EParkourState::None || !OwnerCharacter)
+    {
+        return;
+    }
+
+    UpdateParkourMovement(DeltaTime);
 }
 
 void UParkourComponent::BeginPlay()
@@ -48,19 +61,20 @@ void UParkourComponent::TryParkour()
         FVector CalculatedTarget = FVector::ZeroVector;
 
         // [Logic] DecideAndStart의 내용을 여기서 판단
-        if (Height >= HurdleThreshold)
+        if (Height <= HurdleThreshold && bIsThin)
         {
-            // 높은 벽 -> 클라임
-            DesiredState = EParkourState::Climb;
-            FVector TempTarget = Hit.ImpactPoint;
-            TempTarget.Z = TopLocation.Z + 50.f;
-            CalculatedTarget = TempTarget + (OwnerCharacter->GetActorForwardVector() * 60.f);
-        }
-        else if (Height < HurdleThreshold && bIsThin)
-        {
-            // 낮고 얇은 벽 -> 허들
             DesiredState = EParkourState::Hurdle;
-            CalculatedTarget = Hit.ImpactPoint + (OwnerCharacter->GetActorForwardVector() * 80.f);
+            CalculatedTarget = Hit.ImpactPoint + (OwnerCharacter->GetActorForwardVector() * 100.f);
+            CalculatedTarget.Z = OwnerCharacter->GetActorLocation().Z;
+        }
+        else if (Height > HurdleThreshold && Height <= ClimbThreshold)
+        {
+            DesiredState = EParkourState::Climb;
+
+            FVector TempTarget = TopLocation;
+            TempTarget += OwnerCharacter->GetActorForwardVector() * 50.f;
+            TempTarget.Z = TopLocation.Z + 5.f;
+            CalculatedTarget = TempTarget;
         }
 
         // 2. 파쿠르 조건이 맞으면 서버에 RPC 요청
@@ -75,32 +89,44 @@ void UParkourComponent::TryParkour()
 
 bool UParkourComponent::DetectObstacle(FHitResult& OutHit, float& OutHeight, bool& bOutThinObstacle, FVector& TopLocation) const
 {
-    FVector Start = OwnerCharacter->GetActorLocation();
-    FVector Forward = OwnerCharacter->GetActorForwardVector();
+    if (!OwnerCharacter) return false;
 
-    // 1️⃣ Forward Trace
-    FVector End = Start + Forward * TraceDistance;
+    UCapsuleComponent* Capsule = OwnerCharacter->GetCapsuleComponent();
+    if (!Capsule) return false;
 
-    bool bHit = GetWorld()->LineTraceSingleByChannel(
+    const FVector ActorLocation = OwnerCharacter->GetActorLocation();
+    const FVector Forward = OwnerCharacter->GetActorForwardVector();
+
+    const float CapsuleRadius = DetectCapsuleRadius;
+    const float CapsuleHalfHeight = DetectCapsuleHalfHeight;
+
+    const FVector Start = ActorLocation + FVector(0.f, 0.f, CapsuleHalfHeight);
+    const FVector End = Start + Forward * TraceDistance;
+
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(ParkourCapsuleTrace), false, OwnerCharacter);
+    FCollisionShape CapsuleShape = FCollisionShape::MakeCapsule(CapsuleRadius, CapsuleHalfHeight);
+
+    const bool bHit = GetWorld()->SweepSingleByChannel(
         OutHit,
         Start,
         End,
-        ECC_Visibility
+        FQuat::Identity,
+        ECC_Visibility,
+        CapsuleShape,
+        Params
     );
 
-    if (!bHit) return false;
+    if (!bHit || !OutHit.GetActor())
+    {
+        return false;
+    }
 
     // =========================
     // 🔥 두께 측정 (Reverse Trace 방식)
     // =========================
     
-    float MaxCheckDistance = 200.f; // 최대 탐색 거리 (이보다 두꺼우면 Hurdle 불가)
-    float ThicknessThreshold = 100.f; // 얇은 장애물 기준치
-    
-    // 앞에서 맞은 지점에서 최대 탐색 거리만큼 뚫고 지나간 뒤쪽 위치
-    FVector ReverseStart = OutHit.ImpactPoint + (Forward * MaxCheckDistance);
-    
-    // 뒤에서 원래 맞았던 앞면(ImpactPoint)을 향해 거꾸로 쏩니다.
+    const float MaxCheckDistance = MaxObstacleThickness + 40.f;
+    FVector ReverseStart = OutHit.ImpactPoint + Forward * MaxCheckDistance;
     FVector ReverseEnd = OutHit.ImpactPoint;
 
     FHitResult ReverseHit;
@@ -108,45 +134,46 @@ bool UParkourComponent::DetectObstacle(FHitResult& OutHit, float& OutHeight, boo
         ReverseHit,
         ReverseStart,
         ReverseEnd,
-        ECC_Visibility
+        ECC_Visibility,
+        Params
     );
 
-    // 거꾸로 쏴서 맞은 액터가 처음에 맞은 액터와 동일한지 확인
     if (bReverseHit && ReverseHit.GetActor() == OutHit.GetActor())
     {
-        // 뒷면을 맞췄다면, 앞면과 뒷면 사이의 거리가 곧 '두께'가 됩니다.
-        float Thickness = FVector::Distance(OutHit.ImpactPoint, ReverseHit.ImpactPoint);
-        bOutThinObstacle = (Thickness <= ThicknessThreshold);
+        const float Thickness = FVector::Distance(OutHit.ImpactPoint, ReverseHit.ImpactPoint);
+        bOutThinObstacle = Thickness <= MaxObstacleThickness;
     }
     else
     {
-        // 최대 거리(200) 안에서 뒷면을 찾지 못했다면 너무 두꺼운 벽입니다.
         bOutThinObstacle = false;
     }
-
+    
     // =========================
     // 🔥 높이 측정 (기존)
     // =========================
 
-    FVector TopTraceStart = OutHit.ImpactPoint + FVector(0, 0, 180.f);
-    FVector TopTraceEnd   = OutHit.ImpactPoint - FVector(0, 0, 180.f);
+    FVector TopTraceStart = OutHit.ImpactPoint + FVector(0.f, 0.f, ClimbThreshold + 50.f);
+    FVector TopTraceEnd   = OutHit.ImpactPoint - FVector(0.f, 0.f, 50.f);
 
     FHitResult TopHit;
     bool bTopHit = GetWorld()->LineTraceSingleByChannel(
         TopHit,
         TopTraceStart,
         TopTraceEnd,
-        ECC_Visibility
+        ECC_Visibility,
+        Params
     );
 
-    if (!bTopHit) return false;
+    if (!bTopHit)
+    {
+        return false;
+    }
 
-    float CharacterBaseZ = OwnerCharacter->GetActorLocation().Z;
+    const float CharacterBaseZ = OwnerCharacter->GetActorLocation().Z;
     OutHeight = TopHit.ImpactPoint.Z - CharacterBaseZ;
-    
     TopLocation = TopHit.ImpactPoint;
 
-    return true;
+    return OutHeight > 0.f && OutHeight <= ClimbThreshold;
 }
 
 void UParkourComponent::EndParkour()
@@ -172,23 +199,20 @@ void UParkourComponent::EndParkour()
 
 void UParkourComponent::Server_EndParkour_Implementation()
 {
-    if (!OwnerCharacter || !Movement) return;
-
-    OwnerCharacter->SetActorLocation(TargetLocation);
-    OwnerCharacter->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-    Movement->SetMovementMode(MOVE_Walking);
-    ParkourState = EParkourState::None;
+    FinishParkourMovement();
 }
 
 void UParkourComponent::Server_StartParkour_Implementation(EParkourState NewState, FVector NetTargetLocation)
 {
+    if (!OwnerCharacter || !Movement) return;
+
     ParkourState = NewState;
     TargetLocation = NetTargetLocation;
 
-    if (Movement) Movement->DisableMovement();
+    Movement->DisableMovement();
     OwnerCharacter->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-    // 모든 클라이언트에게 몽타주 재생 명령
+    StartParkourMovement();
     Multicast_PlayParkourMontage(NewState);
 }
 
@@ -222,4 +246,101 @@ USkeletalMeshComponent* UParkourComponent::GetBodyMesh() const
     );
     
     return BodyMesh;
+}
+
+void UParkourComponent::StartParkourMovement()
+{
+    if (!OwnerCharacter) return;
+
+    ParkourStartLocation = OwnerCharacter->GetActorLocation();
+    ParkourElapsedTime = 0.f;
+    bParkourMoving = true;
+
+    CurrentParkourDuration = (ParkourState == EParkourState::Hurdle)
+        ? HurdleDuration
+        : ClimbDuration;
+
+    ParkourMidLocation = FVector(
+        ParkourStartLocation.X,
+        ParkourStartLocation.Y,
+        TargetLocation.Z
+    );
+}
+
+FVector UParkourComponent::CalculateHurdleLocation(float Alpha) const
+{
+    FVector BaseLocation = FMath::Lerp(ParkourStartLocation, TargetLocation, Alpha);
+
+    const float ArcOffset = FMath::Sin(Alpha * PI) * HurdleArcHeight;
+    BaseLocation.Z += ArcOffset;
+
+    return BaseLocation;
+}
+
+FVector UParkourComponent::CalculateClimbLocation(float Alpha) const
+{
+    FVector NewLocation = ParkourStartLocation;
+
+    if (Alpha < 0.75f)
+    {
+        const float VerticalAlpha = Alpha / 0.75f;
+        NewLocation.Z = FMath::Lerp(ParkourStartLocation.Z, TargetLocation.Z, VerticalAlpha);
+    }
+    else
+    {
+        const float FinalAlpha = (Alpha - 0.75f) / 0.25f;
+        NewLocation = FMath::Lerp(
+            FVector(ParkourStartLocation.X, ParkourStartLocation.Y, TargetLocation.Z),
+            TargetLocation,
+            FinalAlpha
+        );
+    }
+
+    return NewLocation;
+}
+
+void UParkourComponent::UpdateParkourMovement(float DeltaTime)
+{
+    if (!OwnerCharacter || CurrentParkourDuration <= 0.f)
+    {
+        FinishParkourMovement();
+        return;
+    }
+
+    ParkourElapsedTime += DeltaTime;
+    const float Alpha = FMath::Clamp(ParkourElapsedTime / CurrentParkourDuration, 0.f, 1.f);
+
+    FVector NewLocation = OwnerCharacter->GetActorLocation();
+
+    switch (ParkourState)
+    {
+    case EParkourState::Hurdle:
+        NewLocation = CalculateHurdleLocation(Alpha);
+        break;
+
+    case EParkourState::Climb:
+        NewLocation = CalculateClimbLocation(Alpha);
+        break;
+
+    default:
+        break;
+    }
+
+    OwnerCharacter->SetActorLocation(NewLocation, false);
+
+    if (Alpha >= 1.f)
+    {
+        FinishParkourMovement();
+    }
+}
+
+void UParkourComponent::FinishParkourMovement()
+{
+    if (!OwnerCharacter || !Movement) return;
+
+    bParkourMoving = false;
+    OwnerCharacter->SetActorLocation(TargetLocation, false);
+    OwnerCharacter->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    Movement->SetMovementMode(MOVE_Walking);
+    ParkourState = EParkourState::None;
 }

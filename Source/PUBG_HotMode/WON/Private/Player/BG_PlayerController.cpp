@@ -4,7 +4,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
-#include "BG_PlayerHealthViewModel.h"
+#include "BG_HealthViewModel.h"
 #include "Player/BG_PlayerState.h"
 #include "Player/BG_Character.h"
 
@@ -40,7 +40,7 @@ namespace
 
 ABG_PlayerController::ABG_PlayerController()
 {
-	HUDViewModel = CreateDefaultSubobject<UBG_PlayerHealthViewModel>(TEXT("HUDViewModel"));
+	HUDViewModel = CreateDefaultSubobject<UBG_HealthViewModel>(TEXT("HUDViewModel"));
 }
 
 void ABG_PlayerController::BeginPlay()
@@ -51,10 +51,6 @@ void ABG_PlayerController::BeginPlay()
 	if (HUDViewModel)
 	{
 		HUDViewModel->NotifyPlayerStateReady(GetPlayerState<ABG_PlayerState>());
-		if (ABG_Character* BGCharacter = GetBGCharacter())
-		{
-			HUDViewModel->NotifyCombatReady(BGCharacter);
-		}
 	}
 }
 
@@ -67,7 +63,6 @@ void ABG_PlayerController::OnPossess(APawn* InPawn)
 	if (HUDViewModel)
 	{
 		HUDViewModel->NotifyPlayerStateReady(GetPlayerState<ABG_PlayerState>());
-		HUDViewModel->NotifyCombatReady(GetBGCharacter());
 	}
 }
 
@@ -86,7 +81,6 @@ void ABG_PlayerController::SetPawn(APawn* InPawn)
 	if (HUDViewModel)
 	{
 		HUDViewModel->NotifyPlayerStateReady(GetPlayerState<ABG_PlayerState>());
-		HUDViewModel->NotifyCombatReady(GetBGCharacter());
 	}
 }
 

@@ -32,7 +32,7 @@ enum class EBGCharacterState : uint8
 {
 	Idle        UMETA(DisplayName = "Idle"),
 	Reloading   UMETA(DisplayName = "Reloading"), // 장전 중
-	Equipping   UMETA(DisplayName = "Equipping"), // 총 꺼내는 중
+ 	Equipping   UMETA(DisplayName = "Equipping"), // 총 꺼내는 중
 	MeleeAttacking UMETA(DisplayName = "MeleeAttacking"), // 근접 공격 중
 	Dead        UMETA(DisplayName = "Dead")       // 사망
 };
@@ -76,6 +76,9 @@ protected:
 
 	UFUNCTION()
 	void OnRep_EquippedWeaponPoseType();
+
+	UFUNCTION()
+	void HandleHealthDeathStateChanged(bool bNewIsDead);
 
 	void ApplyWeaponMovementState();
 
@@ -225,6 +228,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Weapon")
 	void SetCurrentInteractableWeapon(AActor* NewInteractableWeapon);
+
+	UFUNCTION(BlueprintPure, Category = "Health")
+	class UBG_HealthComponent* GetHealthComponent() const { return HealthComponent; }
 
 private:
 	void UpdateDerivedState();

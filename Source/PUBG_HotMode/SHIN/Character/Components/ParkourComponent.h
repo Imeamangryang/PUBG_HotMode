@@ -20,8 +20,9 @@ class PUBG_HOTMODE_API UParkourComponent : public UActorComponent
 
 public:
 	UParkourComponent();
-	
+
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -29,27 +30,30 @@ protected:
 public:
 	UFUNCTION(BlueprintCallable, Category="Parkour|Animation")
 	void TryParkour();
-	
+
 	UFUNCTION(BlueprintCallable, Category="Parkour|Animation")
 	void EndParkour();
-	
-	// 파쿠르 시작 요청 (클라이언트 -> 서버)
+
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_StartParkour(EParkourState NewState, FVector NetTargetLocation);
 
-	// 파쿠르 종료 요청 (클라이언트 -> 서버)
 	UFUNCTION(Server, Reliable)
 	void Server_EndParkour();
 
-	// 애니메이션 실행 (서버 -> 모든 클라이언트)
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayParkourMontage(EParkourState State);
-	
-	// 유틸리티: "Body" 메쉬를 안전하게 찾아주는 함수
+
 	USkeletalMeshComponent* GetBodyMesh() const;
 
 private:
 	bool DetectObstacle(FHitResult& OutHit, float& OutHeight, bool& bOutThinObstacle, FVector& OutTopLocation) const;
+
+	void StartParkourMovement();
+	void UpdateParkourMovement(float DeltaTime);
+	void FinishParkourMovement();
+
+	FVector CalculateHurdleLocation(float Alpha) const;
+	FVector CalculateClimbLocation(float Alpha) const;
 
 private:
 	UPROPERTY()
@@ -58,17 +62,36 @@ private:
 	UPROPERTY()
 	class UCharacterMovementComponent* Movement;
 
-	UPROPERTY(EditAnywhere, Category="Parkour")
-	float TraceDistance = 100.f;
+	UPROPERTY(EditAnywhere, Category="Parkour|Detect")
+	float TraceDistance = 120.f;
 
-	UPROPERTY(EditAnywhere, Category="Parkour")
+	UPROPERTY(EditAnywhere, Category="Parkour|Detect")
 	float HurdleThreshold = 80.f;
 
-	UPROPERTY(EditAnywhere, Category="Parkour")
+	UPROPERTY(EditAnywhere, Category="Parkour|Detect")
 	float ClimbThreshold = 200.f;
-	
+
+	UPROPERTY(EditAnywhere, Category="Parkour|Detect")
+	float DetectCapsuleRadius = 24.f;
+
+	UPROPERTY(EditAnywhere, Category="Parkour|Detect")
+	float DetectCapsuleHalfHeight = 48.f;
+
+	UPROPERTY(EditAnywhere, Category="Parkour|Detect")
+	float MaxObstacleThickness = 100.f;
+
+	UPROPERTY(EditAnywhere, Category="Parkour|Move")
+	float HurdleDuration = 1.4f;
+
+	UPROPERTY(EditAnywhere, Category="Parkour|Move")
+	float ClimbDuration = 2.8f;
+
+	UPROPERTY(EditAnywhere, Category="Parkour|Move")
+	float HurdleArcHeight = 60.f;
+
 	UPROPERTY(Replicated)
 	FVector TargetLocation;
+
 	UPROPERTY(Replicated)
 	EParkourState ParkourState = EParkourState::None;
 
@@ -78,5 +101,9 @@ private:
 	UPROPERTY(EditAnywhere, Category="Parkour|Animation")
 	class UAnimMontage* ClimbMontage;
 
-
+	bool bParkourMoving = false;
+	float ParkourElapsedTime = 0.f;
+	float CurrentParkourDuration = 0.f;
+	FVector ParkourStartLocation = FVector::ZeroVector;
+	FVector ParkourMidLocation = FVector::ZeroVector;
 };
