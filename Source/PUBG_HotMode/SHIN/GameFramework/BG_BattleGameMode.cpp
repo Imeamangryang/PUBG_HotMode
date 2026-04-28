@@ -2,6 +2,7 @@
 #include "BG_GameState.h"
 #include "Player/BG_PlayerController.h"
 #include "GameFramework/PlayerStart.h"
+#include "Utils/BG_LogHelper.h"
 
 ABG_BattleGameMode::ABG_BattleGameMode()
 {
@@ -13,79 +14,100 @@ void ABG_BattleGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
+	BG_SHIN_LOG_EVENT_BLOCK(this, "BattleGameMode BeginPlay",
+		TEXT("GameMode=%s GameStateClass=%s PlayerControllerClass=%s DefaultPawnClass=%s"),
+		*GetClass()->GetName(),
+		*BGLogHelper::SafeClass(GameStateClass),
+		*BGLogHelper::SafeClass(PlayerControllerClass),
+		*BGLogHelper::SafeClass(DefaultPawnClass));
+
 	if (ABG_GameState* BGGameState = GetGameState<ABG_GameState>())
 	{
 		BGGameState->SetMatchState(EBG_MatchState::PreMatch);
+		BG_SHIN_LOG_INFO(TEXT("MatchState set to PreMatch"));
 	}
-
-	UE_LOG(LogTemp, Log, TEXT("[BattleGameMode] BeginPlay - MatchState set to PreMatch"));
+	else
+	{
+		BG_SHIN_LOG_ERROR(TEXT("GetGameState<ABG_GameState>() returned null"));
+	}
 }
 
 void ABG_BattleGameMode::PostLogin(APlayerController* NewPlayer)
 {
 	Super::PostLogin(NewPlayer);
 
-	UE_LOG(LogTemp, Log, TEXT("[BattleGameMode] Player joined with controller: %s"),
-		*GetNameSafe(NewPlayer ? NewPlayer->GetClass() : nullptr));
+	BG_SHIN_LOG_EVENT_BLOCK(this, "BattleGameMode PostLogin",
+		TEXT("NewPlayerClass=%s"),
+		*BGLogHelper::SafeClass(NewPlayer));
+
+	BG_SHIN_LOG_CONTROLLER(this, NewPlayer, "Battle PostLogin");
 }
 
 void ABG_BattleGameMode::HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer)
 {
 	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
 
-	UE_LOG(LogTemp, Warning, TEXT("[BattleGameMode] HandleStartingNewPlayer for controller: %s"),
-		*GetNameSafe(NewPlayer));
-	
+	BG_SHIN_LOG_EVENT_BLOCK(this, "HandleStartingNewPlayer",
+		TEXT("About to call RestartPlayer"));
+
+	BG_SHIN_LOG_CONTROLLER(this, NewPlayer, "Before RestartPlayer");
+
+	if (!NewPlayer)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("HandleStartingNewPlayer failed because NewPlayer was null"));
+		return;
+	}
+
 	RestartPlayer(NewPlayer);
+
+	BG_SHIN_LOG_CONTROLLER(this, NewPlayer, "After RestartPlayer");
 }
- 
+
 void ABG_BattleGameMode::SpawnAndPossessPlayer(APlayerController* NewPlayer)
 {
 	if (!NewPlayer)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[BattleGameMode] SpawnAndPossessPlayer failed because NewPlayer was null."));
+		BG_SHIN_LOG_ERROR(TEXT("SpawnAndPossessPlayer failed because NewPlayer was null"));
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("[BattleGameMode] SpawnAndPossessPlayer start - Controller: %s, ExistingPawn: %s"),
-		*GetNameSafe(NewPlayer),
-		*GetNameSafe(NewPlayer->GetPawn()));
+	BG_SHIN_LOG_EVENT_BLOCK(this, "SpawnAndPossessPlayer",
+		TEXT("Starting spawn flow for controller=%s"),
+		*BGLogHelper::SafeName(NewPlayer));
+
+	BG_SHIN_LOG_CONTROLLER(this, NewPlayer, "Before SpawnAndPossessPlayer");
 
 	if (NewPlayer->GetPawn())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[BattleGameMode] Player already has pawn: %s"),
-			*GetNameSafe(NewPlayer->GetPawn()));
+		BG_SHIN_LOG_WARN(TEXT("Player already has pawn: %s"), *BGLogHelper::SafeName(NewPlayer->GetPawn()));
 		return;
 	}
 
 	AActor* StartSpot = ChoosePlayerStart(NewPlayer);
 	if (!StartSpot)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[BattleGameMode] No PlayerStart found for controller: %s"),
-			*GetNameSafe(NewPlayer));
+		BG_SHIN_LOG_ERROR(TEXT("No PlayerStart found for controller: %s"), *BGLogHelper::SafeName(NewPlayer));
 		return;
 	}
+
+	BG_SHIN_LOG_ACTOR(this, StartSpot, "Chosen StartSpot");
 
 	if (!DefaultPawnClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[BattleGameMode] DefaultPawnClass is not set."));
+		BG_SHIN_LOG_ERROR(TEXT("DefaultPawnClass is not set"));
 		return;
 	}
-
-	UE_LOG(LogTemp, Warning, TEXT("[BattleGameMode] Spawning pawn at start spot: %s"),
-		*GetNameSafe(StartSpot));
 
 	APawn* NewPawn = GetWorld()->SpawnActor<APawn>(DefaultPawnClass, StartSpot->GetActorTransform());
 	if (!NewPawn)
 	{
-		UE_LOG(LogTemp, Error, TEXT("[BattleGameMode] Failed to spawn pawn for controller: %s"),
-			*GetNameSafe(NewPlayer));
+		BG_SHIN_LOG_ERROR(TEXT("Failed to spawn pawn for controller: %s"), *BGLogHelper::SafeName(NewPlayer));
 		return;
 	}
 
+	BG_SHIN_LOG_ACTOR(this, NewPawn, "Spawned Pawn");
+
 	NewPlayer->Possess(NewPawn);
 
-	UE_LOG(LogTemp, Warning, TEXT("[BattleGameMode] Possessed pawn %s with controller %s"),
-		*GetNameSafe(NewPawn),
-		*GetNameSafe(NewPlayer));
+	BG_SHIN_LOG_CONTROLLER(this, NewPlayer, "After Possess");
 }

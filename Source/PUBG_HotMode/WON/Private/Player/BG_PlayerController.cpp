@@ -9,6 +9,8 @@
 #include "Blueprint/UserWidget.h"
 #include "PUBG_HotMode/ConstructionHelperExtension.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Utils/BG_LogHelper.h"
+#include "InputMappingContext.h"
 
 namespace
 {
@@ -40,6 +42,7 @@ namespace
 	}
 }
 
+
 ABG_PlayerController::ABG_PlayerController()
 {
 	EXT_CREATE_DEFAULT_SUBOBJECT(HUDViewModel);
@@ -49,14 +52,38 @@ ABG_PlayerController::ABG_PlayerController()
 void ABG_PlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+	
+	BG_SHIN_LOG_EVENT_BLOCK(this, "BG_PlayerController BeginPlay",
+		TEXT("IsLocalController=%s"),
+		IsLocalController() ? TEXT("true") : TEXT("false"));
+
+	BG_SHIN_LOG_CONTROLLER(this, this, "PlayerController BeginPlay");
+	
 	RefreshMappingContext();
 	EnsureGameHUDWidget();
 	RefreshViewModelBinding();
+	
+	if (IsLocalController())
+	{
+		FInputModeGameOnly InputMode;
+		SetInputMode(InputMode);
+		bShowMouseCursor = false;
+
+		BG_SHIN_LOG_INFO(TEXT("Applied GameOnly input mode on local controller"));
+	}
 }
 
 void ABG_PlayerController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
+	
+	BG_SHIN_LOG_EVENT_BLOCK(this, "BG_PlayerController OnPossess",
+		TEXT("PossessedPawn=%s PawnClass=%s"),
+		*BGLogHelper::SafeName(InPawn),
+		*BGLogHelper::SafeClass(InPawn));
+
+	BG_SHIN_LOG_CONTROLLER(this, this, "After OnPossess");
+	
 	RefreshMappingContext();
 	BindPawnInput();
 	RefreshViewModelBinding();
@@ -71,6 +98,14 @@ void ABG_PlayerController::SetupInputComponent()
 void ABG_PlayerController::SetPawn(APawn* InPawn)
 {
 	Super::SetPawn(InPawn);
+	
+	BG_SHIN_LOG_EVENT_BLOCK(this, "BG_PlayerController SetPawn",
+		TEXT("NewPawn=%s PawnClass=%s"),
+		*BGLogHelper::SafeName(InPawn),
+		*BGLogHelper::SafeClass(InPawn));
+
+	BG_SHIN_LOG_CONTROLLER(this, this, "After SetPawn");
+	
 	RefreshMappingContext();
 	BindPawnInput();
 	RefreshViewModelBinding();
@@ -135,14 +170,19 @@ void ABG_PlayerController::EnsureGameHUDWidget()
 
 void ABG_PlayerController::RefreshMappingContext()
 {
+	BG_SHIN_LOG_INFO(TEXT("RefreshMappingContext start IsLocal=%s"),
+		IsLocalController() ? TEXT("true") : TEXT("false"));
+
 	if (!IsLocalController())
 	{
+		BG_SHIN_LOG_WARN(TEXT("RefreshMappingContext skipped because controller is not local"));
 		return;
 	}
 
 	UInputMappingContext* DefaultMappingContext = InputConfig.DefaultMappingContext.Get();
 	if (!DefaultMappingContext)
 	{
+		BG_SHIN_LOG_ERROR(TEXT("RefreshMappingContext failed because DefaultMappingContext was null"));
 		return;
 	}
 
@@ -152,8 +192,17 @@ void ABG_PlayerController::RefreshMappingContext()
 		{
 			Subsystem->RemoveMappingContext(DefaultMappingContext);
 			Subsystem->AddMappingContext(DefaultMappingContext, 0);
+
+			BG_SHIN_LOG_INFO(TEXT("RefreshMappingContext applied MappingContext=%s"),
+				*BGLogHelper::SafeName(DefaultMappingContext));
+			return;
 		}
+
+		BG_SHIN_LOG_ERROR(TEXT("RefreshMappingContext failed because EnhancedInputLocalPlayerSubsystem was null"));
+		return;
 	}
+
+	BG_SHIN_LOG_ERROR(TEXT("RefreshMappingContext failed because LocalPlayer was null"));
 }
 
 void ABG_PlayerController::BindPawnInput()
@@ -215,6 +264,7 @@ void ABG_PlayerController::BindPawnInput()
 
 void ABG_PlayerController::OnMoveInputTriggered(const FInputActionValue& Value)
 {
+	BG_SHIN_LOG_INFO(TEXT("OnMoveInputTriggered"));
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
 		BGCharacter->MoveFromInput(Value);
