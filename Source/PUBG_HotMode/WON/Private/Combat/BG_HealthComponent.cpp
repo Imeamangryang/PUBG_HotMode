@@ -2,8 +2,6 @@
 
 #include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"
-#include "GameFramework/Pawn.h"
-#include "Player/BG_PlayerState.h"
 
 UBG_HealthComponent::UBG_HealthComponent()
 {
@@ -47,7 +45,7 @@ void UBG_HealthComponent::BeginPlay()
 	BoostGauge = FMath::Clamp(BoostGauge, 0.f, MaxBoostGauge);
 	ApplyHealthSnapshot(bIsDead ? 0.f : MaxHP, bIsDead);
 }
-
+ 
 UBG_HealthComponent* UBG_HealthComponent::FindHealthComponent(AActor* TargetActor)
 {
 	if (!IsValid(TargetActor))
@@ -94,6 +92,7 @@ bool UBG_HealthComponent::ApplyDamage(float DamageAmount)
 		return false;
 	}
 
+	// HP가 0이 되면 사망 상태로 전환 (모든 클라이언트에 레플리케이트됨)
 	ApplyHealthSnapshot(NewHP, NewHP <= 0.f);
 	OnDamaged.Broadcast(AppliedDamage, CurrentHP, MaxHP, bIsDead);
 	return true;
@@ -205,26 +204,6 @@ void UBG_HealthComponent::ApplyHealthSnapshot(float NewCurrentHP, bool bNewIsDea
 
 	BroadcastHealthChanged();
 	BroadcastDeathStateChangedIfNeeded(bWasDead);
-	SyncOwnerPlayerState();
-}
-
-void UBG_HealthComponent::SyncOwnerPlayerState() const
-{
-	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
-	if (!OwnerPawn)
-	{
-		UE_LOG(LogTemp, Error, TEXT("%s: SyncOwnerPlayerState failed because owner was not a pawn."), *GetNameSafe(this));
-		return;
-	}
-
-	ABG_PlayerState* OwnerPlayerState = OwnerPawn->GetPlayerState<ABG_PlayerState>();
-	if (!OwnerPlayerState)
-	{
-		UE_LOG(LogTemp, Error, TEXT("%s: SyncOwnerPlayerState failed because owner player state was null."), *GetNameSafe(this));
-		return;
-	}
-
-	OwnerPlayerState->SetHealthSnapshot(CurrentHP, bIsDead, MaxHP);
 }
 
 void UBG_HealthComponent::OnRep_CurrentHP()

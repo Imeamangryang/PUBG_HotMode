@@ -18,8 +18,13 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "BG|Lobby")
 	void RequestStartGame();
+	
+	void NotifyStartRequested();
+	void DoServerTravel();
 
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "BG|Lobby")
 	FName BattleMapName = TEXT("/Game/SHIN/Maps/BattleMap");
+	
+	bool bStartRequested = false;
 };

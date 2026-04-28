@@ -5,6 +5,7 @@
 #include "Engine/Engine.h"
 #include "Player/BG_Character.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBGWeaponFire, Log, All);
 
@@ -73,20 +74,42 @@ void UBG_WeaponFireComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 
 void UBG_WeaponFireComponent::RequestFire()
 {
+	RequestStartFire();
+}
+
+void UBG_WeaponFireComponent::RequestStartFire()
+{
 	if (!CachedCharacter)
 	{
-		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: RequestFire failed because CachedCharacter was null."), *GetNameSafe(this));
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: RequestStartFire failed because CachedCharacter was null."), *GetNameSafe(this));
+		return;
+	}
+
+	bIsHoldingFireInput = true;
+
+	const EBGWeaponPoseType WeaponPoseType = CachedCharacter->GetEquippedWeaponPoseType();
+	const EBGWeaponFireMode FireMode = ResolveFireMode(WeaponPoseType);
+
+	if (FireMode == EBGWeaponFireMode::FullAuto)
+	{
+		if (GetOwner() && GetOwner()->HasAuthority())
+		{
+			StartAutomaticFire();
+			return;
+		}
+
+		Server_StartFire();
 		return;
 	}
 
 	if (!CanFireWeapon())
 	{
-		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: RequestFire failed because firing was blocked. Character=%s, WeaponEquipped=%d, CanFire=%d, Pose=%s, Ammo=%d"),
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: RequestStartFire failed because firing was blocked. Character=%s, WeaponEquipped=%d, CanFire=%d, Pose=%s, Ammo=%d"),
 			*GetNameSafe(this),
 			*GetNameSafe(CachedCharacter),
 			CachedCharacter->IsWeaponEquipped() ? 1 : 0,
 			CachedCharacter->CanFire() ? 1 : 0,
-			*UEnum::GetValueAsString(CachedCharacter->GetEquippedWeaponPoseType()),
+			*UEnum::GetValueAsString(WeaponPoseType),
 			CurrentMagazineAmmo);
 		return;
 	}
@@ -97,7 +120,20 @@ void UBG_WeaponFireComponent::RequestFire()
 		return;
 	}
 
-	Server_RequestFire();
+	Server_RequestSingleFire();
+}
+
+void UBG_WeaponFireComponent::RequestStopFire()
+{
+	bIsHoldingFireInput = false;
+
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		StopAutomaticFire();
+		return;
+	}
+
+	Server_StopFire();
 }
 
 bool UBG_WeaponFireComponent::CanFireWeapon() const
@@ -118,6 +154,8 @@ bool UBG_WeaponFireComponent::CanFireWeapon() const
 void UBG_WeaponFireComponent::ApplyTemporaryWeaponProfile(EBGWeaponPoseType WeaponPoseType)
 {
 	const FBGWeaponAmmoSettings* AmmoSettings = ResolveAmmoSettings(WeaponPoseType);
+	bIsHoldingFireInput = false;
+	StopAutomaticFire();
 	CurrentWeaponPoseType = WeaponPoseType;
 
 	if (!AmmoSettings || WeaponPoseType == EBGWeaponPoseType::None)
@@ -135,12 +173,34 @@ void UBG_WeaponFireComponent::ApplyTemporaryWeaponProfile(EBGWeaponPoseType Weap
 	BroadcastAmmoState();
 }
 
-void UBG_WeaponFireComponent::Server_RequestFire_Implementation()
+void UBG_WeaponFireComponent::Server_RequestSingleFire_Implementation()
 {
 	ExecuteFire();
 }
 
-bool UBG_WeaponFireComponent::Server_RequestFire_Validate()
+bool UBG_WeaponFireComponent::Server_RequestSingleFire_Validate()
+{
+	return true;
+}
+
+void UBG_WeaponFireComponent::Server_StartFire_Implementation()
+{
+	bIsHoldingFireInput = true;
+	StartAutomaticFire();
+}
+
+bool UBG_WeaponFireComponent::Server_StartFire_Validate()
+{
+	return true;
+}
+
+void UBG_WeaponFireComponent::Server_StopFire_Implementation()
+{
+	bIsHoldingFireInput = false;
+	StopAutomaticFire();
+}
+
+bool UBG_WeaponFireComponent::Server_StopFire_Validate()
 {
 	return true;
 }
@@ -179,15 +239,15 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 		return false;
 	}
 
-	if (!ConsumeAmmo(1))
-	{
-		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ExecuteFire failed because ammo was empty. Pose=%s"), *GetNameSafe(this), *UEnum::GetValueAsString(WeaponPoseType));
-		return false;
-	}
-
 	const float CurrentTime = World->TimeSeconds;
 	if (CurrentTime - LastFireTime < FireSettings->FireCooldown)
 	{
+		return false;
+	}
+
+	if (!ConsumeAmmo(1))
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ExecuteFire failed because ammo was empty. Pose=%s"), *GetNameSafe(this), *UEnum::GetValueAsString(WeaponPoseType));
 		return false;
 	}
 
@@ -357,6 +417,77 @@ bool UBG_WeaponFireComponent::ConsumeAmmo(int32 AmmoCost)
 	return true;
 }
 
+void UBG_WeaponFireComponent::StartAutomaticFire()
+{
+	if (!CachedCharacter)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: StartAutomaticFire failed because CachedCharacter was null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (ResolveFireMode(CachedCharacter->GetEquippedWeaponPoseType()) != EBGWeaponFireMode::FullAuto)
+	{
+		if (!ExecuteFire())
+		{
+			UE_LOG(LogBGWeaponFire, Error, TEXT("%s: StartAutomaticFire fallback single shot failed."), *GetNameSafe(this));
+		}
+		return;
+	}
+
+	if (!GetWorld())
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: StartAutomaticFire failed because World was null."), *GetNameSafe(this));
+		return;
+	}
+
+	const FBGWeaponFireSettings* FireSettings = ResolveFireSettings(CachedCharacter->GetEquippedWeaponPoseType());
+	if (!FireSettings)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: StartAutomaticFire failed because fire settings were null."), *GetNameSafe(this));
+		return;
+	}
+
+	ExecuteFire();
+
+	GetWorld()->GetTimerManager().SetTimer(
+		AutomaticFireTimerHandle,
+		this,
+		&UBG_WeaponFireComponent::HandleAutomaticFire,
+		FireSettings->FireCooldown,
+		true);
+}
+
+void UBG_WeaponFireComponent::StopAutomaticFire()
+{
+	if (!GetWorld())
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: StopAutomaticFire failed because World was null."), *GetNameSafe(this));
+		return;
+	}
+
+	GetWorld()->GetTimerManager().ClearTimer(AutomaticFireTimerHandle);
+}
+
+void UBG_WeaponFireComponent::HandleAutomaticFire()
+{
+	if (!bIsHoldingFireInput)
+	{
+		StopAutomaticFire();
+		return;
+	}
+
+	if (!CanFireWeapon())
+	{
+		StopAutomaticFire();
+		return;
+	}
+
+	if (!ExecuteFire())
+	{
+		StopAutomaticFire();
+	}
+}
+
 const FBGWeaponFireSettings* UBG_WeaponFireComponent::ResolveFireSettings(EBGWeaponPoseType WeaponPoseType) const
 {
 	switch (WeaponPoseType)
@@ -387,6 +518,19 @@ const FBGWeaponAmmoSettings* UBG_WeaponFireComponent::ResolveAmmoSettings(EBGWea
 	}
 }
 
+EBGWeaponFireMode UBG_WeaponFireComponent::ResolveFireMode(EBGWeaponPoseType WeaponPoseType) const
+{
+	switch (WeaponPoseType)
+	{
+	case EBGWeaponPoseType::Rifle:
+		return EBGWeaponFireMode::FullAuto;
+	case EBGWeaponPoseType::Pistol:
+	case EBGWeaponPoseType::Shotgun:
+	default:
+		return EBGWeaponFireMode::SemiAuto;
+	}
+}
+
 void UBG_WeaponFireComponent::Multicast_PlayWeaponFireDebug_Implementation(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, FVector_NetQuantize ImpactPoint, bool bDidHit, EBGWeaponPoseType WeaponPoseType)
 {
 	const FBGWeaponFireSettings* FireSettings = ResolveFireSettings(WeaponPoseType);
@@ -405,4 +549,3 @@ void UBG_WeaponFireComponent::OnRep_AmmoState()
 {
 	BroadcastAmmoState();
 }
-

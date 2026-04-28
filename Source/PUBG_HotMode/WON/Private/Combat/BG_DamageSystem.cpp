@@ -2,8 +2,6 @@
 
 #include "Combat/BG_DamageSystem.h"
 #include "Combat/BG_HealthComponent.h"
-#include "GameFramework/Pawn.h"
-#include "Player/BG_PlayerState.h"
 
 
 UBG_DamageSystem::UBG_DamageSystem()
@@ -25,25 +23,12 @@ bool UBG_DamageSystem::ApplyDamageToActor(AActor* TargetActor, float DamageAmoun
 		return false;
 	}
 
-	if (UBG_HealthComponent* HealthComponent = TargetActor->FindComponentByClass<UBG_HealthComponent>())
+	UBG_HealthComponent* HealthComponent = UBG_HealthComponent::FindHealthComponent(TargetActor);
+	if (!HealthComponent)
 	{
-		return HealthComponent->ApplyDamage(DamageAmount);
-	}
-
-	const APawn* TargetPawn = Cast<APawn>(TargetActor);
-
-	if (!TargetPawn)
-	{
-		UE_LOG(LogTemp, Error, TEXT("%s: ApplyDamageToActor could not find a health component and target was not a pawn. Target=%s"), *GetNameSafe(this), *GetNameSafe(TargetActor));
+		UE_LOG(LogTemp, Error, TEXT("%s: ApplyDamageToActor failed because target had no HealthComponent. Target=%s"), *GetNameSafe(this), *GetNameSafe(TargetActor));
 		return false;
 	}
 
-	ABG_PlayerState* TargetPlayerState = TargetPawn->GetPlayerState<ABG_PlayerState>();
-	if (!TargetPlayerState)
-	{
-		UE_LOG(LogTemp, Error, TEXT("%s: ApplyDamageToActor failed because TargetPlayerState was null. Target=%s"), *GetNameSafe(this), *GetNameSafe(TargetActor));
-		return false;
-	}
-
-	return TargetPlayerState->ApplyDamage(DamageAmount);
+	return HealthComponent->ApplyDamage(DamageAmount);
 }

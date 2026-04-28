@@ -9,6 +9,13 @@
 class UAnimMontage;
 class UBG_DamageSystem;
 
+UENUM(BlueprintType)
+enum class EBGWeaponFireMode : uint8
+{
+	SemiAuto,
+	FullAuto
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnBGWeaponAmmoChanged, int32, CurrentAmmo, int32, MaxAmmo);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnBGWeaponHitIndicatorChanged, bool, bDidHit, FVector, ImpactLocation);
 
@@ -64,6 +71,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Weapon")
 	void RequestFire();
 
+	UFUNCTION(BlueprintCallable, Category = "Combat|Weapon")
+	void RequestStartFire();
+
+	UFUNCTION(BlueprintCallable, Category = "Combat|Weapon")
+	void RequestStopFire();
+
 	UFUNCTION(BlueprintPure, Category = "Combat|Weapon")
 	bool CanFireWeapon() const;
 
@@ -94,7 +107,13 @@ protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(Server, Reliable, WithValidation)
-	void Server_RequestFire();
+	void Server_RequestSingleFire();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_StartFire();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_StopFire();
 
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayWeaponFireDebug(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, FVector_NetQuantize ImpactPoint, bool bDidHit, EBGWeaponPoseType WeaponPoseType);
@@ -105,6 +124,7 @@ protected:
 private:
 	const FBGWeaponFireSettings* ResolveFireSettings(EBGWeaponPoseType WeaponPoseType) const;
 	const FBGWeaponAmmoSettings* ResolveAmmoSettings(EBGWeaponPoseType WeaponPoseType) const;
+	EBGWeaponFireMode ResolveFireMode(EBGWeaponPoseType WeaponPoseType) const;
 	bool ExecuteFire();
 	bool TraceSingleShot(const FBGWeaponFireSettings& Settings, const FVector& TraceStart, const FVector& ShotDirection, FHitResult& OutHit) const;
 	void ApplyHitResult(const FHitResult& HitResult, const FBGWeaponFireSettings& Settings) const;
@@ -113,6 +133,9 @@ private:
 	void BroadcastAmmoState() const;
 	void BroadcastHitIndicator(bool bDidHit, const FVector& ImpactLocation) const;
 	bool ConsumeAmmo(int32 AmmoCost);
+	void StartAutomaticFire();
+	void StopAutomaticFire();
+	void HandleAutomaticFire();
 
 private:
 	UPROPERTY()
@@ -164,4 +187,6 @@ private:
 	EBGWeaponPoseType CurrentWeaponPoseType = EBGWeaponPoseType::None;
 
 	float LastFireTime = -1000.f;
+	bool bIsHoldingFireInput = false;
+	FTimerHandle AutomaticFireTimerHandle;
 };

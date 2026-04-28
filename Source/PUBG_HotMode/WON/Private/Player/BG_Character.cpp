@@ -2,10 +2,16 @@
 #include "Combat/BG_DamageSystem.h"
 #include "Combat/BG_HealthComponent.h"
 #include "Combat/BG_WeaponFireComponent.h"
+#include "Inventory/BG_EquipmentComponent.h"
+#include "Inventory/BG_InventoryComponent.h"
 #include "Camera/CameraComponent.h"
+#include "Components/BoxComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/SphereComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
@@ -31,10 +37,32 @@ ABG_Character::ABG_Character()
 
 	DamageSystem = CreateDefaultSubobject<UBG_DamageSystem>(TEXT("DamageSystem"));
 	HealthComponent = CreateDefaultSubobject<UBG_HealthComponent>(TEXT("HealthComponent"));
+	InventoryComponent = CreateDefaultSubobject<UBG_InventoryComponent>(TEXT("InventoryComponent"));
+	EquipmentComponent = CreateDefaultSubobject<UBG_EquipmentComponent>(TEXT("EquipmentComponent"));
 	WeaponFireComponent = CreateDefaultSubobject<UBG_WeaponFireComponent>(TEXT("WeaponFireComponent"));
 
 	WeaponAttachPoint = CreateDefaultSubobject<USceneComponent>(TEXT("WeaponAttachPoint"));
 	WeaponAttachPoint->SetupAttachment(GetMesh());
+
+	HitCollisionBox = CreateDefaultSubobject<UBoxComponent>(TEXT("HitCollisionBox"));
+	HitCollisionBox->SetupAttachment(RootComponent);
+	HitCollisionBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	HitCollisionBox->SetCollisionObjectType(ECC_WorldDynamic);
+	HitCollisionBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	HitCollisionBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	HitCollisionBox->SetCollisionResponseToChannel(ECC_Camera, ECR_Block);
+
+	InteractionRangeSphere = CreateDefaultSubobject<USphereComponent>(TEXT("InteractionRangeSphere"));
+	InteractionRangeSphere->SetupAttachment(RootComponent);
+	InteractionRangeSphere->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	InteractionRangeSphere->SetCollisionObjectType(ECC_WorldDynamic);
+	InteractionRangeSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InteractionRangeSphere->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Overlap);
+	InteractionRangeSphere->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
+	InteractionRangeSphere->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Overlap);
+	InteractionRangeSphere->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	InteractionRangeSphere->SetGenerateOverlapEvents(true);
+	InteractionRangeSphere->InitSphereRadius(InteractionRangeRadius);
 	
 	// 파쿠르 컴포넌트
 	ParkourComponent = CreateDefaultSubobject<UParkourComponent>(TEXT("ParkourComponent"));
@@ -58,6 +86,33 @@ void ABG_Character::BeginPlay()
 	else
 	{
 		UE_LOG(LogBGCharacter, Error, TEXT("%s: BeginPlay failed because HealthComponent was null."), *GetNameSafe(this));
+	}
+
+	if (!HitCollisionBox)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: BeginPlay failed because HitCollisionBox was null."), *GetNameSafe(this));
+	}
+	else if (UCapsuleComponent* CharacterCapsuleComponent = GetCapsuleComponent())
+	{
+		const float CapsuleRadius = CharacterCapsuleComponent->GetScaledCapsuleRadius();
+		const float CapsuleHalfHeight = CharacterCapsuleComponent->GetScaledCapsuleHalfHeight();
+		HitCollisionBox->SetBoxExtent(FVector(CapsuleRadius, CapsuleRadius, CapsuleHalfHeight));
+		HitCollisionBox->SetRelativeLocation(FVector(0.f, 0.f, CapsuleHalfHeight));
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: BeginPlay failed because CapsuleComponent was null."), *GetNameSafe(this));
+	}
+
+	if (InteractionRangeSphere)
+	{
+		InteractionRangeSphere->SetSphereRadius(InteractionRangeRadius);
+		InteractionRangeSphere->OnComponentBeginOverlap.AddDynamic(this, &ABG_Character::OnInteractionRangeBeginOverlap);
+		InteractionRangeSphere->OnComponentEndOverlap.AddDynamic(this, &ABG_Character::OnInteractionRangeEndOverlap);
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: BeginPlay failed because InteractionRangeSphere was null."), *GetNameSafe(this));
 	}
 
 	// 변수명을 Children에서 ChildComps로 변경하여 충돌 방지
@@ -142,6 +197,44 @@ void ABG_Character::StartJumpFromInput()
 void ABG_Character::StopJumpFromInput()
 {
 	StopJumping();
+}
+
+void ABG_Character::StartPrimaryActionFromInput()
+{
+	if (bIsWeaponEquipped)
+	{
+		if (!WeaponFireComponent)
+		{
+			UE_LOG(LogBGCharacter, Error, TEXT("%s: StartPrimaryActionFromInput failed because WeaponFireComponent was null."), *GetNameSafe(this));
+			return;
+		}
+
+		WeaponFireComponent->RequestStartFire();
+		return;
+	}
+
+	Req_PrimaryAction();
+}
+
+void ABG_Character::StopPrimaryActionFromInput()
+{
+	if (!bIsWeaponEquipped)
+	{
+		return;
+	}
+
+	if (!WeaponFireComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: StopPrimaryActionFromInput failed because WeaponFireComponent was null."), *GetNameSafe(this));
+		return;
+	}
+
+	WeaponFireComponent->RequestStopFire();
+}
+
+void ABG_Character::InteractFromInput()
+{
+	TryInteractWithCurrentTarget();
 }
 
 void ABG_Character::StartAimFromInput()
@@ -486,6 +579,134 @@ bool ABG_Character::Server_SetWeaponState_Validate(EBGWeaponPoseType NewWeaponPo
 void ABG_Character::SetCurrentInteractableWeapon(AActor* NewInteractableWeapon)
 {
 	CurrentInteractableWeapon = NewInteractableWeapon;
+}
+
+void ABG_Character::OnInteractionRangeBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+	if (!OverlappedComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: OnInteractionRangeBeginOverlap failed because OverlappedComponent was null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (!OtherActor || OtherActor == this)
+	{
+		return;
+	}
+
+	if (!OtherComp)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: OnInteractionRangeBeginOverlap failed because OtherComp was null. OtherActor=%s"), *GetNameSafe(this), *GetNameSafe(OtherActor));
+		return;
+	}
+
+	if (!IsWeaponInteractableActor(OtherActor))
+	{
+		return;
+	}
+
+	NearbyInteractableWeapons.AddUnique(OtherActor);
+	RefreshCurrentInteractableWeapon();
+}
+
+void ABG_Character::OnInteractionRangeEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+{
+	if (!OverlappedComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: OnInteractionRangeEndOverlap failed because OverlappedComponent was null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (!OtherActor || OtherActor == this)
+	{
+		return;
+	}
+
+	NearbyInteractableWeapons.Remove(OtherActor);
+	RefreshCurrentInteractableWeapon();
+}
+
+void ABG_Character::RefreshCurrentInteractableWeapon()
+{
+	NearbyInteractableWeapons.RemoveAll([](const TObjectPtr<AActor>& CandidateActor)
+	{
+		return !IsValid(CandidateActor);
+	});
+
+	AActor* ClosestInteractable = nullptr;
+	float ClosestDistanceSq = TNumericLimits<float>::Max();
+
+	for (AActor* CandidateActor : NearbyInteractableWeapons)
+	{
+		if (!IsValid(CandidateActor))
+		{
+			continue;
+		}
+
+		const float CandidateDistanceSq = FVector::DistSquared(GetActorLocation(), CandidateActor->GetActorLocation());
+		if (CandidateDistanceSq < ClosestDistanceSq)
+		{
+			ClosestDistanceSq = CandidateDistanceSq;
+			ClosestInteractable = CandidateActor;
+		}
+	}
+
+	SetCurrentInteractableWeapon(ClosestInteractable);
+}
+
+bool ABG_Character::IsWeaponInteractableActor(const AActor* CandidateActor) const
+{
+	if (!IsValid(CandidateActor))
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: IsWeaponInteractableActor failed because CandidateActor was invalid."), *GetNameSafe(this));
+		return false;
+	}
+
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	CandidateActor->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+
+	for (const UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!PrimitiveComponent)
+		{
+			UE_LOG(LogBGCharacter, Error, TEXT("%s: IsWeaponInteractableActor found a null PrimitiveComponent on %s."), *GetNameSafe(this), *GetNameSafe(CandidateActor));
+			continue;
+		}
+
+		if (PrimitiveComponent->GetCollisionProfileName() == WeaponInteractableCollisionProfileName)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void ABG_Character::TryInteractWithCurrentTarget()
+{
+	if (CurrentInteractableWeapon)
+	{
+		const FString DebugMessage = FString::Printf(TEXT("%s: Interact detected with %s."),
+			*GetNameSafe(this),
+			*GetNameSafe(CurrentInteractableWeapon));
+
+		UE_LOG(LogBGCharacter, Warning, TEXT("%s"), *DebugMessage);
+
+		if (GEngine && GetWorld() && GetWorld()->GetNetMode() != NM_DedicatedServer)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Green, DebugMessage);
+		}
+
+		return;
+	}
+
+	if (bIsFalling && bHasParachute && !bIsParachuteOpen)
+	{
+		OnParachuteAction();
+		return;
+	}
+
+	UE_LOG(LogBGCharacter, Error, TEXT("%s: TryInteractWithCurrentTarget failed because there was no interactable target in range."), *GetNameSafe(this));
 }
 
 

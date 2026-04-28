@@ -1,12 +1,14 @@
 ﻿#include "BG_LobbyGameMode.h"
 #include "BG_GameState.h"
+#include "Character/BG_LobbyPlayerController.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 
 ABG_LobbyGameMode::ABG_LobbyGameMode()
 {
-	bUseSeamlessTravel = true;
+	bUseSeamlessTravel = false;
 	GameStateClass = ABG_GameState::StaticClass();
+	PlayerControllerClass = ABG_LobbyPlayerController::StaticClass();
 }
 
 void ABG_LobbyGameMode::BeginPlay()
@@ -64,8 +66,51 @@ void ABG_LobbyGameMode::RequestStartGame()
 		}
 	}
 
-	const FString TravelURL = BattleMapName.ToString();
+	//const FString TravelURL = BattleMapName.ToString() + TEXT("?game=/Game/SHIN/Blueprints/BP_BattleGameMode.BP_BattleGameMode_C"); 
+	const FString TravelURL =
+	TEXT("/Game/SHIN/Maps/BattleMap?listen?game=/Game/SHIN/Blueprints/BP_BattleGameMode.BP_BattleGameMode_C");
+	
 	UE_LOG(LogTemp, Log, TEXT("[LobbyGameMode] ServerTravel to: %s"), *TravelURL);
 
 	World->ServerTravel(TravelURL, true);
+}
+
+void ABG_LobbyGameMode::NotifyStartRequested()
+{
+	if (bStartRequested)
+	{
+		return;
+	}
+
+	bStartRequested = true;
+
+	FTimerHandle TimerHandle;
+	
+	GetWorldTimerManager().SetTimer(
+		TimerHandle,
+		this,
+		&ABG_LobbyGameMode::DoServerTravel,
+		0.5f,
+		false
+	);
+}
+
+void ABG_LobbyGameMode::DoServerTravel()
+{
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+
+		if (!IsValid(PC) || !PC->PlayerState)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Abort Travel: Player not ready"));
+			bStartRequested = false;
+			return;
+		}
+	}
+
+	const FString TravelURL =
+		TEXT("/Game/SHIN/Maps/BattleMap?listen?game=/Game/SHIN/Blueprints/BP_BattleGameMode.BP_BattleGameMode_C");
+
+	GetWorld()->ServerTravel(TravelURL, true);
 }

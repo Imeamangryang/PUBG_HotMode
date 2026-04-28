@@ -9,10 +9,14 @@
 class USpringArmComponent;
 class UCameraComponent;
 class UBG_DamageSystem;
+class UBG_EquipmentComponent;
 class UBG_HealthComponent;
 class UBG_WeaponFireComponent;
 class UAnimMontage;
 class USceneComponent;
+class UBoxComponent;
+class USphereComponent;
+class UPrimitiveComponent;
 class AActor;
 class UParkourComponent;
 
@@ -90,6 +94,9 @@ public:
 	void LookFromInput(const FInputActionValue& Value);
 	void StartJumpFromInput();
 	void StopJumpFromInput();
+	void StartPrimaryActionFromInput();
+	void StopPrimaryActionFromInput();
+	void InteractFromInput();
 	void Req_PrimaryAction();
 	void StartAimFromInput();
 	void StopAimFromInput();
@@ -232,11 +239,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Health")
 	class UBG_HealthComponent* GetHealthComponent() const { return HealthComponent; }
 
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	class UBG_InventoryComponent* GetInventoryComponent() const { return InventoryComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	class UBG_EquipmentComponent* GetEquipmentComponent() const { return EquipmentComponent; }
+
 private:
+	UFUNCTION()
+	void OnInteractionRangeBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
+	UFUNCTION()
+	void OnInteractionRangeEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+
 	void UpdateDerivedState();
 	void UpdateActionAvailability();
 	void UpdateCharacterStance();
 	bool CanStartAim() const;
+	void RefreshCurrentInteractableWeapon();
+	bool IsWeaponInteractableActor(const AActor* CandidateActor) const;
+	void TryInteractWithCurrentTarget();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -250,15 +272,36 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBG_HealthComponent> HealthComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<class UBG_InventoryComponent> InventoryComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UBG_EquipmentComponent> EquipmentComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBG_WeaponFireComponent> WeaponFireComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> WeaponAttachPoint;
 	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Collision", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UBoxComponent> HitCollisionBox;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USphereComponent> InteractionRangeSphere;
+	
 	//파쿠르 시스템
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Parkour", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UParkourComponent> ParkourComponent;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
+	float InteractionRangeRadius = 180.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
+	FName WeaponInteractableCollisionProfileName = TEXT("Weapon");
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
+	TArray<TObjectPtr<AActor>> NearbyInteractableWeapons;
 
 public:
 	/** 공격 설정 */

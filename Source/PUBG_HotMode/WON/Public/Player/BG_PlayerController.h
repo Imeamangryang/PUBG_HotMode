@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
@@ -8,6 +8,7 @@ class ABG_Character;
 class UBG_HealthViewModel;
 class UInputAction;
 class UInputMappingContext;
+class UUserWidget;
 struct FInputActionValue;
 
 USTRUCT(BlueprintType)
@@ -44,7 +45,7 @@ struct FBGPlayerInputConfig
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Aim")
 	TObjectPtr<UInputAction> AimAction = nullptr;
-	
+
 	// 상호작용 키
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|Core")
 	TObjectPtr<UInputAction> InteractAction;
@@ -70,12 +71,15 @@ protected:
 
 	void BindPawnInput();
 	void RefreshMappingContext();
+	void RefreshViewModelBinding();
+	void EnsureGameHUDWidget();
 
 	void OnMoveInputTriggered(const FInputActionValue& Value);
 	void OnLookInputTriggered(const FInputActionValue& Value);
 	void OnJumpInputStarted();
 	void OnJumpInputCompleted();
 	void OnAttackInputStarted();
+	void OnAttackInputCompleted();
 	void OnEquipPistolInputStarted();
 	void OnEquipRifleInputStarted();
 	void OnUnequipWeaponInputStarted();
@@ -102,7 +106,10 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "HUD", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBG_HealthViewModel> HUDViewModel = nullptr;
-	
-	
-	
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HUD", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UUserWidget> GameHUDWidgetClass = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> GameHUDWidget = nullptr;
 };

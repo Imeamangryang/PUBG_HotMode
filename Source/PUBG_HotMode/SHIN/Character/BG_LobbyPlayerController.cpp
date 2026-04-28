@@ -64,10 +64,8 @@ void ABG_LobbyPlayerController::Server_RequestStartGame_Implementation()
 		return;
 	}
 
-	if (ABG_LobbyGameMode* LobbyGameMode = World->GetAuthGameMode<ABG_LobbyGameMode>())
+	if (ABG_LobbyGameMode* GM = GetWorld()->GetAuthGameMode<ABG_LobbyGameMode>())
 	{
-		LobbyGameMode->RequestStartGame();
-		
-		UE_LOG(LogTemp, Warning, TEXT("[LobbyPlayerController] Requesting game start from server."));
+		GM->NotifyStartRequested(); // ⭐ Travel 직접 호출 ❌
 	}
 }

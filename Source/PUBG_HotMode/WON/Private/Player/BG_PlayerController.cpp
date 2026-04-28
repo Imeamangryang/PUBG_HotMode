@@ -5,8 +5,10 @@
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
 #include "BG_HealthViewModel.h"
-#include "Player/BG_PlayerState.h"
 #include "Player/BG_Character.h"
+#include "Blueprint/UserWidget.h"
+#include "PUBG_HotMode/ConstructionHelperExtension.h"
+#include "UObject/ConstructorHelpers.h"
 
 namespace
 {
@@ -40,18 +42,16 @@ namespace
 
 ABG_PlayerController::ABG_PlayerController()
 {
-	HUDViewModel = CreateDefaultSubobject<UBG_HealthViewModel>(TEXT("HUDViewModel"));
+	EXT_CREATE_DEFAULT_SUBOBJECT(HUDViewModel);
+	Ext::SetClass(GameHUDWidgetClass, TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/GEONU/Blueprints/Widgets/WBP_GameHUD.WBP_GameHUD_C'"));
 }
 
 void ABG_PlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 	RefreshMappingContext();
-
-	if (HUDViewModel)
-	{
-		HUDViewModel->NotifyPlayerStateReady(GetPlayerState<ABG_PlayerState>());
-	}
+	EnsureGameHUDWidget();
+	RefreshViewModelBinding();
 }
 
 void ABG_PlayerController::OnPossess(APawn* InPawn)
@@ -59,11 +59,7 @@ void ABG_PlayerController::OnPossess(APawn* InPawn)
 	Super::OnPossess(InPawn);
 	RefreshMappingContext();
 	BindPawnInput();
-
-	if (HUDViewModel)
-	{
-		HUDViewModel->NotifyPlayerStateReady(GetPlayerState<ABG_PlayerState>());
-	}
+	RefreshViewModelBinding();
 }
 
 void ABG_PlayerController::SetupInputComponent()
@@ -77,10 +73,63 @@ void ABG_PlayerController::SetPawn(APawn* InPawn)
 	Super::SetPawn(InPawn);
 	RefreshMappingContext();
 	BindPawnInput();
+	RefreshViewModelBinding();
+}
 
-	if (HUDViewModel)
+void ABG_PlayerController::RefreshViewModelBinding()
+{
+	if (!IsLocalController())
 	{
-		HUDViewModel->NotifyPlayerStateReady(GetPlayerState<ABG_PlayerState>());
+		return;
+	}
+
+	if (!HUDViewModel)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: RefreshHUDViewModelBinding failed because HUDViewModel was null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		HUDViewModel->NotifyPossessedCharacterReady(BGCharacter);
+		return;
+	}
+
+	HUDViewModel->NotifyPossessedCharacterCleared();
+}
+
+void ABG_PlayerController::EnsureGameHUDWidget()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (GameHUDWidget)
+	{
+		if (!GameHUDWidget->IsInViewport() && !GameHUDWidget->AddToPlayerScreen())
+		{
+			UE_LOG(LogTemp, Error, TEXT("%s: EnsureGameHUDWidget failed to add existing GameHUDWidget to player screen."), *GetNameSafe(this));
+		}
+		return;
+	}
+
+	if (!GameHUDWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: EnsureGameHUDWidget failed because GameHUDWidgetClass was null."), *GetNameSafe(this));
+		return;
+	}
+
+	GameHUDWidget = CreateWidget<UUserWidget>(this, GameHUDWidgetClass);
+	if (!GameHUDWidget)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: EnsureGameHUDWidget failed because CreateWidget returned null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (!GameHUDWidget->AddToPlayerScreen())
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: EnsureGameHUDWidget failed to add GameHUDWidget to player screen."), *GetNameSafe(this));
 	}
 }
 
@@ -139,6 +188,7 @@ void ABG_PlayerController::BindPawnInput()
 	BindCompletedIfValid(EnhancedInputComponent, InputConfig.JumpAction.Get(), this, &ABG_PlayerController::OnJumpInputCompleted);
 
 	BindStartedIfValid(EnhancedInputComponent, InputConfig.AttackAction.Get(), this, &ABG_PlayerController::OnAttackInputStarted);
+	BindCompletedIfValid(EnhancedInputComponent, InputConfig.AttackAction.Get(), this, &ABG_PlayerController::OnAttackInputCompleted);
 
 	BindStartedIfValid(EnhancedInputComponent, InputConfig.CrouchAction.Get(), this, &ABG_PlayerController::OnCrouchInputStarted);
 	BindStartedIfValid(EnhancedInputComponent, InputConfig.ProneAction.Get(), this, &ABG_PlayerController::OnProneInputStarted);
@@ -199,11 +249,22 @@ void ABG_PlayerController::OnAttackInputStarted()
 {
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
-		BGCharacter->Req_PrimaryAction();
+		BGCharacter->StartPrimaryActionFromInput();
 		return;
 	}
 
 	UE_LOG(LogTemp, Error, TEXT("%s: OnAttackInputStarted failed because controlled character was null."), *GetNameSafe(this));
+}
+
+void ABG_PlayerController::OnAttackInputCompleted()
+{
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->StopPrimaryActionFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnAttackInputCompleted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnEquipPistolInputStarted()
@@ -335,9 +396,13 @@ void ABG_PlayerController::OnAimInputCompleted()
 
 void ABG_PlayerController::OnInteractInputStarted()
 {
-	if (ABG_Character* BGChar = GetBGCharacter()) {
-		BGChar->OnParachuteAction(); 
+	if (ABG_Character* BGChar = GetBGCharacter())
+	{
+		BGChar->InteractFromInput();
+		return;
 	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnInteractInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
 

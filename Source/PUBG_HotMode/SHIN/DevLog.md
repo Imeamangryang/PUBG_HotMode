@@ -138,3 +138,18 @@
 
 PlayerState, PlayerController, PlayerCharacter 등의 수정은 다른 팀원과 협의 후 
 진행해야함으로 우선은 GameState와 GameMode 중심으로 시스템을 구축하는 것을 목표로 함.
+
+---
+
+현재 세부 구현 계획
+
+EntryMap
+- 시작 시 GameInstance의 ConnectiontoDedicatedServer() 호출하여 서버에 접속
+- 접속 성공 시 LobbyMap으로 입장
+
+LobbyMap
+- LobbyGameMode, LobbyPlayerController 사용
+- Lobby UI에서 Start 버튼 클릭 시 모든 플레이어가 배틀맵으로 이동하도록 ServerTravel 호출 (No Seamless Travel)
+
+BattleMap
+- BattleGameMode, BG_PlayerController 사용

@@ -80,7 +80,6 @@ protected:
 	void OnRep_BoostGauge();
 
 private:
-	void SyncOwnerPlayerState() const;
 	void ApplyHealthSnapshot(float NewCurrentHP, bool bNewIsDead);
 	bool CanMutateHealthState(const TCHAR* OperationName) const;
 	void BroadcastHealthChanged();
