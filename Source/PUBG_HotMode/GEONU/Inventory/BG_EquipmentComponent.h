@@ -9,6 +9,7 @@
 #include "BG_EquipmentComponent.generated.h"
 
 class ABG_Character;
+class ABG_WorldItemBase;
 class UBG_InventoryComponent;
 class UBG_ItemDataRegistrySubsystem;
 struct FBG_ArmorItemDataRow;
@@ -165,6 +166,12 @@ public: // --- Equipment Mutation ---
 	UFUNCTION(BlueprintCallable, Category="Equipment|Throwable")
 	bool TryClearThrowable();
 
+	UFUNCTION(BlueprintCallable, Category="Equipment")
+	void RequestDropEquipment(EBG_EquipmentSlot EquipmentSlot);
+
+	UFUNCTION(BlueprintCallable, Category="Equipment")
+	bool TryDropEquipment(EBG_EquipmentSlot EquipmentSlot, EBGInventoryFailReason& OutFailReason);
+
 public: // --- Equipment Query ---
 	UFUNCTION(BlueprintPure, Category="Equipment")
 	FBG_EquipmentPublicState GetPublicEquipmentState() const { return PublicState; }
@@ -183,6 +190,9 @@ public: // --- Equipment Query ---
 
 	UFUNCTION(BlueprintPure, Category="Equipment|Weapon")
 	FGameplayTag GetActiveWeaponItemTag() const;
+
+	UFUNCTION(BlueprintPure, Category="Equipment|Weapon")
+	EBG_EquipmentSlot GetSlotForEquippedWeaponTag(FGameplayTag WeaponItemTag) const;
 
 	UFUNCTION(BlueprintPure, Category="Equipment|Weapon")
 	int32 GetLoadedAmmo(EBG_EquipmentSlot WeaponSlot) const;
@@ -215,6 +225,9 @@ private: // --- Validation ---
 	/// Server mutation guard
 	bool CanMutateEquipmentState(const TCHAR* OperationName) const;
 
+	UFUNCTION(Server, Reliable)
+	void Server_RequestDropEquipment(EBG_EquipmentSlot EquipmentSlot);
+
 	bool IsWeaponSlot(EBG_EquipmentSlot Slot) const;
 	bool IsArmorSlot(EBG_EquipmentSlot Slot) const;
 
@@ -239,6 +252,13 @@ private: // --- State Mutation ---
 	/// Net update request
 	void ForceEquipmentNetUpdate() const;
 
+	bool SpawnDroppedEquipmentItem(EBG_ItemType DroppedItemType, const FGameplayTag& DroppedItemTag,
+	                               int32 DroppedLoadedAmmo) const;
+
+	FTransform BuildDropTransform() const;
+
+	void NotifyEquipmentFailure(EBGInventoryFailReason FailReason, EBG_EquipmentSlot EquipmentSlot) const;
+
 private: // --- Legacy Adapter ---
 	/// Character weapon state sync
 	void ApplyActiveWeaponStateToCharacter();
@@ -251,11 +271,17 @@ private: // --- Utility ---
 	/// Slot display name
 	static FString GetEquipmentSlotName(EBG_EquipmentSlot Slot);
 
+	static FString GetItemTypeName(EBG_ItemType ItemType);
+
 private: // --- Data ---
 	/// Full replication visual state
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_PublicState, Category="Equipment",
 		meta=(AllowPrivateAccess="true"))
 	FBG_EquipmentPublicState PublicState;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipment|World Item",
+		meta=(AllowPrivateAccess="true"))
+	TSubclassOf<ABG_WorldItemBase> WorldItemClass;
 
 	UFUNCTION()
 	void OnRep_PublicState();

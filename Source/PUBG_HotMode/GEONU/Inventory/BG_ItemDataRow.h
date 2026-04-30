@@ -4,11 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
-#include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "GameplayTagContainer.h"
 #include "BG_ItemTypes.h"
 #include "BG_ItemDataRow.generated.h"
+
+class ABG_WorldItemBase;
 
 USTRUCT(BlueprintType)
 struct PUBG_HOTMODE_API FBG_ItemDataRow : public FTableRowBase
@@ -35,9 +36,9 @@ struct PUBG_HOTMODE_API FBG_ItemDataRow : public FTableRowBase
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Item|Display")
 	TSoftObjectPtr<UTexture2D> Icon;
 
-	/// Actor display mesh data
+	/// Optional item-specific world actor Blueprint used for pickup/drop display transforms
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Item|Display")
-	TSoftObjectPtr<UStaticMesh> WorldStaticMesh;
+	TSoftClassPtr<ABG_WorldItemBase> WorldItemClass;
 
 	/// Unit weight of an item
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Item|Inventory", meta=(ClampMin="0.0"))

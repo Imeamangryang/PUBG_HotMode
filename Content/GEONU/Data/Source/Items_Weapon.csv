@@ -1,4 +1,4 @@
-Name,ItemType,ItemTag,DisplayName,Description,Icon,WorldStaticMesh,UnitWeight,bStackable,MaxStackSize,EquipSlot,WeaponPoseCategory,AmmoItemTag,MagazineSize,ReloadDuration
+Name,ItemType,ItemTag,DisplayName,Description,Icon,WorldItemClass,UnitWeight,bStackable,MaxStackSize,EquipSlot,WeaponPoseCategory,AmmoItemTag,MagazineSize,ReloadDuration
 Item.Weapon.AR,Weapon,Item.Weapon.AR,Assault Rifle,Primary rifle weapon,,,0.0,false,1,Primary,Rifle,Item.Ammo.556mm,30,2.4
 Item.Weapon.SR,Weapon,Item.Weapon.SR,Sniper Rifle,Primary sniper weapon,,,0.0,false,1,Primary,Rifle,Item.Ammo.762mm,5,3.6
 Item.Weapon.Pistol,Weapon,Item.Weapon.Pistol,Pistol,Sidearm weapon,,,0.0,false,1,Pistol,Pistol,Item.Ammo.556mm,15,1.8

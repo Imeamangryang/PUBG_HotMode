@@ -2,15 +2,22 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "GameplayTagContainer.h"
 #include "InputActionValue.h"
+#include "Inventory/BG_EquipmentComponent.h"
+#include "Inventory/BG_ItemTypes.h"
 #include "Net/UnrealNetwork.h"
 #include "BG_Character.generated.h"
 
+class ABG_WorldItemBase;
 class USpringArmComponent;
 class UCameraComponent;
+class USkeletalMeshComponent;
 class UBG_DamageSystem;
 class UBG_EquipmentComponent;
 class UBG_HealthComponent;
+class UBG_ItemUseComponent;
+class UBG_InteractionAnimationComponent;
 class UBG_WeaponFireComponent;
 class UAnimMontage;
 class USceneComponent;
@@ -19,8 +26,10 @@ class USphereComponent;
 class UPrimitiveComponent;
 class AActor;
 class UParkourComponent;
+enum class EBG_EquipmentSlot : uint8;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogBGCharacter, Log, All);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBGNearbyWorldItemsChanged);
 
 UENUM(BlueprintType)
 enum class EBGWeaponPoseType : uint8
@@ -84,6 +93,9 @@ protected:
 	UFUNCTION()
 	void HandleHealthDeathStateChanged(bool bNewIsDead);
 
+	UFUNCTION()
+	void HandleDamaged(float DamageAmount, float CurrentHP, float MaxHP, bool bNewIsDead);
+
 	void ApplyWeaponMovementState();
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -97,6 +109,7 @@ public:
 	void StartPrimaryActionFromInput();
 	void StopPrimaryActionFromInput();
 	void InteractFromInput();
+	void ReloadFromInput();
 	void Req_PrimaryAction();
 	void StartAimFromInput();
 	void StopAimFromInput();
@@ -175,6 +188,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	AActor* GetCurrentInteractableWeapon() const { return CurrentInteractableWeapon; }
 
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	ABG_WorldItemBase* GetCurrentWorldItem() const;
+
 	UFUNCTION(BlueprintNativeEvent, Category = "State")
 	bool CanAim();
 
@@ -236,6 +252,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Weapon")
 	void SetCurrentInteractableWeapon(AActor* NewInteractableWeapon);
 
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	void RequestPickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity);
+
+	UFUNCTION(Server, Reliable)
+	void Server_RequestPickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity);
+
+	UFUNCTION(Client, Reliable)
+	void Client_ReceiveInventoryFailure(EBGInventoryFailReason FailReason, EBG_ItemType ItemType,
+	                                    FGameplayTag ItemTag);
+
 	UFUNCTION(BlueprintPure, Category = "Health")
 	class UBG_HealthComponent* GetHealthComponent() const { return HealthComponent; }
 
@@ -244,6 +270,38 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	class UBG_EquipmentComponent* GetEquipmentComponent() const { return EquipmentComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	class UBG_ItemUseComponent* GetItemUseComponent() const { return ItemUseComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "Animation")
+	UBG_WeaponFireComponent* GetWeaponFireComponent() const { return WeaponFireComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "Animation")
+	UBG_InteractionAnimationComponent* GetInteractionAnimationComponent() const { return InteractionAnimationComponent; }
+
+	UFUNCTION(BlueprintPure, Category = "Animation")
+	USkeletalMeshComponent* GetBodyAnimationMesh();
+
+	UFUNCTION(BlueprintPure, Category = "Inventory")
+	TArray<ABG_WorldItemBase*> GetNearbyWorldItems() const;
+
+	void NotifySuccessfulPickup(EBG_ItemType PickedUpItemType);
+
+	UFUNCTION(BlueprintCallable, Category = "State")
+	void SetCharacterStateValue(EBGCharacterState NewCharacterState);
+
+	UFUNCTION(BlueprintCallable, Category = "State")
+	void StartTimedCharacterState(EBGCharacterState NewCharacterState, float Duration);
+
+	UFUNCTION(BlueprintCallable, Category = "State")
+	void FinishTimedCharacterState(EBGCharacterState ExpectedCharacterState);
+
+	UFUNCTION(BlueprintPure, Category = "Equipment")
+	FName GetDesiredWeaponSocketName(EBG_EquipmentSlot WeaponSlot) const;
+
+	UPROPERTY(BlueprintAssignable, Category = "Inventory")
+	FOnBGNearbyWorldItemsChanged OnNearbyWorldItemsChanged;
 
 private:
 	UFUNCTION()
@@ -255,6 +313,7 @@ private:
 	void UpdateDerivedState();
 	void UpdateActionAvailability();
 	void UpdateCharacterStance();
+	void ClearTimedCharacterState();
 	bool CanStartAim() const;
 	void RefreshCurrentInteractableWeapon();
 	bool IsWeaponInteractableActor(const AActor* CandidateActor) const;
@@ -278,11 +337,23 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBG_EquipmentComponent> EquipmentComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UBG_ItemUseComponent> ItemUseComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Combat", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBG_WeaponFireComponent> WeaponFireComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Animation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UBG_InteractionAnimationComponent> InteractionAnimationComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USceneComponent> WeaponAttachPoint;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
+	FName WeaponHandSocketName = TEXT("hand_r_weapon_socket");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
+	FName WeaponBackSocketName = TEXT("spine_weapon_socket");
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Collision", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBoxComponent> HitCollisionBox;
@@ -307,6 +378,9 @@ public:
 	/** 공격 설정 */
 	UPROPERTY(EditDefaultsOnly, Category = "Combat|Melee")
 	TObjectPtr<UAnimMontage> MeleePunchMontage;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Combat|Hit Reaction")
+	TObjectPtr<UAnimMontage> HitReactMontage;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Combat|Melee")
 	float MeleeDamage = 10.f;
@@ -334,10 +408,18 @@ public:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Weapon")
 	TObjectPtr<AActor> CurrentInteractableWeapon = nullptr;
 
+	FTimerHandle CharacterStateTimerHandle;
+
 	//UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Weapon")
 	//TArray<TObjectPtr<AActor>> NearbyWeapons;
 	
 	
 	
 	virtual void Tick(float DeltaSeconds) override;
+
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayPickupMontage(EBG_ItemType PickedUpItemType);
+
+	UFUNCTION(NetMulticast, Reliable)
+	void Multicast_PlayHitReactMontage();
 };

@@ -1,8 +1,13 @@
 #include "Combat/BG_WeaponFireComponent.h"
 
 #include "Combat/BG_DamageSystem.h"
+#include "Inventory/BG_EquipmentComponent.h"
+#include "Inventory/BG_InventoryComponent.h"
+#include "Inventory/BG_ItemDataRegistrySubsystem.h"
+#include "Inventory/BG_ItemDataRow.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "Player/BG_Character.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "TimerManager.h"
@@ -60,6 +65,11 @@ void UBG_WeaponFireComponent::BeginPlay()
 	{
 		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: BeginPlay failed because DamageSystem was not found on %s."), *GetNameSafe(this), *GetNameSafe(CachedCharacter));
 	}
+
+	if (CachedCharacter->IsWeaponEquipped())
+	{
+		SyncAmmoFromEquipment();
+	}
 }
 
 void UBG_WeaponFireComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -70,6 +80,7 @@ void UBG_WeaponFireComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 	DOREPLIFETIME(UBG_WeaponFireComponent, CurrentReserveAmmo);
 	DOREPLIFETIME(UBG_WeaponFireComponent, CurrentMaxMagazineAmmo);
 	DOREPLIFETIME(UBG_WeaponFireComponent, CurrentWeaponPoseType);
+	DOREPLIFETIME(UBG_WeaponFireComponent, FireAnimationSequence);
 }
 
 void UBG_WeaponFireComponent::RequestFire()
@@ -136,6 +147,17 @@ void UBG_WeaponFireComponent::RequestStopFire()
 	Server_StopFire();
 }
 
+void UBG_WeaponFireComponent::RequestReload()
+{
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		TryStartReload();
+		return;
+	}
+
+	Server_RequestReload();
+}
+
 bool UBG_WeaponFireComponent::CanFireWeapon() const
 {
 	if (!CachedCharacter)
@@ -151,14 +173,91 @@ bool UBG_WeaponFireComponent::CanFireWeapon() const
 		&& CurrentMagazineAmmo > 0;
 }
 
+bool UBG_WeaponFireComponent::CanReloadWeapon() const
+{
+	if (!CachedCharacter || !CachedCharacter->CanReload())
+	{
+		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon false because character cannot reload. bHasWeapon=%d, bIsReloading=%d, bIsDead=%d"),
+			*GetNameSafe(this), CachedCharacter ? static_cast<int32>(CachedCharacter->IsWeaponEquipped()) : 0,
+			CachedCharacter ? static_cast<int32>(CachedCharacter->IsReloading()) : 0,
+			CachedCharacter ? static_cast<int32>(CachedCharacter->IsDeadState()) : 0);
+		return false;
+	}
+
+	FGameplayTag WeaponItemTag;
+	const FBG_WeaponItemDataRow* WeaponRow = nullptr;
+	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
+	if (!GetActiveWeaponContext(WeaponItemTag, WeaponRow, WeaponSlot, TEXT("CanReloadWeapon")) || !WeaponRow)
+	{
+		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon fallback because active weapon context or row was missing. CurrentWeaponPoseType=%s, CurrentMagazineAmmo=%d, CurrentMaxMagazineAmmo=%d"),
+			*GetNameSafe(this), *UEnum::GetValueAsString(CurrentWeaponPoseType), CurrentMagazineAmmo, CurrentMaxMagazineAmmo);
+		return CurrentWeaponPoseType != EBGWeaponPoseType::None
+			&& CurrentMagazineAmmo < CurrentMaxMagazineAmmo;
+	}
+
+	if (CurrentMagazineAmmo >= WeaponRow->MagazineSize)
+	{
+		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon false because magazine is full. CurrentMagazineAmmo=%d, MagazineSize=%d"), *GetNameSafe(this), CurrentMagazineAmmo, WeaponRow->MagazineSize);
+		return false;
+	}
+
+	if (!WeaponRow->AmmoItemTag.IsValid())
+	{
+		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon allowed because AmmoItemTag is invalid for weapon %s and fallback reload is enabled."), *GetNameSafe(this), *WeaponItemTag.ToString());
+		return true;
+	}
+
+	if (const UBG_InventoryComponent* InventoryComponent = GetInventoryComponent(TEXT("CanReloadWeapon")))
+	{
+		const int32 AmmoCount = InventoryComponent->GetQuantity(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag);
+		if (AmmoCount <= 0)
+		{
+			UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon falling back to code-only reload because inventory has no ammo. AmmoTag=%s"), *GetNameSafe(this), *WeaponRow->AmmoItemTag.ToString());
+			return true;
+		}
+		return AmmoCount > 0;
+	}
+
+	UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon allowed because inventory component was missing and fallback reload is enabled."), *GetNameSafe(this));
+	return true;
+}
+
+float UBG_WeaponFireComponent::GetTimeSinceLastFireAnimation() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: GetTimeSinceLastFireAnimation failed because World was null."), *GetNameSafe(this));
+		return TNumericLimits<float>::Max();
+	}
+
+	if (LastFireAnimationWorldTime < 0.f)
+	{
+		return TNumericLimits<float>::Max();
+	}
+
+	return FMath::Max(0.f, World->GetTimeSeconds() - LastFireAnimationWorldTime);
+}
+
+bool UBG_WeaponFireComponent::HasRecentFireAnimation(float MaxAgeSeconds) const
+{
+	if (MaxAgeSeconds <= 0.f)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: HasRecentFireAnimation failed because MaxAgeSeconds %.3f was not positive."), *GetNameSafe(this), MaxAgeSeconds);
+		return false;
+	}
+
+	return GetTimeSinceLastFireAnimation() <= MaxAgeSeconds;
+}
+
 void UBG_WeaponFireComponent::ApplyTemporaryWeaponProfile(EBGWeaponPoseType WeaponPoseType)
 {
-	const FBGWeaponAmmoSettings* AmmoSettings = ResolveAmmoSettings(WeaponPoseType);
 	bIsHoldingFireInput = false;
 	StopAutomaticFire();
+	CancelReload();
 	CurrentWeaponPoseType = WeaponPoseType;
 
-	if (!AmmoSettings || WeaponPoseType == EBGWeaponPoseType::None)
+	if (WeaponPoseType == EBGWeaponPoseType::None)
 	{
 		CurrentMagazineAmmo = 0;
 		CurrentReserveAmmo = 0;
@@ -167,10 +266,7 @@ void UBG_WeaponFireComponent::ApplyTemporaryWeaponProfile(EBGWeaponPoseType Weap
 		return;
 	}
 
-	CurrentMaxMagazineAmmo = AmmoSettings->MaxMagazineAmmo;
-	CurrentMagazineAmmo = AmmoSettings->MaxMagazineAmmo;
-	CurrentReserveAmmo = AmmoSettings->MaxReserveAmmo;
-	BroadcastAmmoState();
+	SyncAmmoFromEquipment();
 }
 
 void UBG_WeaponFireComponent::Server_RequestSingleFire_Implementation()
@@ -205,6 +301,16 @@ bool UBG_WeaponFireComponent::Server_StopFire_Validate()
 	return true;
 }
 
+void UBG_WeaponFireComponent::Server_RequestReload_Implementation()
+{
+	TryStartReload();
+}
+
+bool UBG_WeaponFireComponent::Server_RequestReload_Validate()
+{
+	return true;
+}
+
 bool UBG_WeaponFireComponent::ExecuteFire()
 {
 	if (!CachedCharacter)
@@ -230,6 +336,8 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 		return false;
 	}
 
+	SyncAmmoFromEquipment();
+
 	if (!CachedCharacter->CanFire())
 	{
 		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ExecuteFire failed because character cannot fire right now. Character=%s, State=%s"),
@@ -252,6 +360,15 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 	}
 
 	LastFireTime = CurrentTime;
+
+	if (UBG_EquipmentComponent* EquipmentComponent = GetEquipmentComponent(TEXT("ExecuteFire")))
+	{
+		const EBG_EquipmentSlot ActiveWeaponSlot = EquipmentComponent->GetActiveWeaponSlot();
+		if (ActiveWeaponSlot != EBG_EquipmentSlot::None)
+		{
+			EquipmentComponent->TryLoadAmmo(ActiveWeaponSlot, CurrentMagazineAmmo);
+		}
+	}
 
 	FVector ViewLocation = FVector::ZeroVector;
 	FRotator ViewRotation = FRotator::ZeroRotator;
@@ -280,6 +397,7 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 	}
 
 	PlayWeaponFireAnimation(WeaponPoseType);
+	MarkFireAnimationTriggered();
 	BroadcastAmmoState();
 	return true;
 }
@@ -362,7 +480,7 @@ void UBG_WeaponFireComponent::PlayWeaponFireAnimation(EBGWeaponPoseType WeaponPo
 		return;
 	}
 
-	USkeletalMeshComponent* BodyMesh = CachedCharacter->GetMesh();
+	USkeletalMeshComponent* BodyMesh = CachedCharacter->GetBodyAnimationMesh();
 	if (!BodyMesh || !BodyMesh->GetAnimInstance())
 	{
 		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: PlayWeaponFireAnimation failed because body mesh or anim instance was null."), *GetNameSafe(this));
@@ -415,6 +533,23 @@ bool UBG_WeaponFireComponent::ConsumeAmmo(int32 AmmoCost)
 
 	CurrentMagazineAmmo = FMath::Max(0, CurrentMagazineAmmo - AmmoCost);
 	return true;
+}
+
+void UBG_WeaponFireComponent::MarkFireAnimationTriggered()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: MarkFireAnimationTriggered failed because World was null."), *GetNameSafe(this));
+		return;
+	}
+
+	LastFireAnimationWorldTime = World->GetTimeSeconds();
+
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		++FireAnimationSequence;
+	}
 }
 
 void UBG_WeaponFireComponent::StartAutomaticFire()
@@ -488,6 +623,422 @@ void UBG_WeaponFireComponent::HandleAutomaticFire()
 	}
 }
 
+UBG_EquipmentComponent* UBG_WeaponFireComponent::GetEquipmentComponent(const TCHAR* OperationName) const
+{
+	if (!CachedCharacter)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because CachedCharacter was null."), *GetNameSafe(this), OperationName);
+		return nullptr;
+	}
+
+	UBG_EquipmentComponent* EquipmentComponent = CachedCharacter->GetEquipmentComponent();
+	if (!EquipmentComponent)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because EquipmentComponent was null."), *GetNameSafe(this), OperationName);
+		return nullptr;
+	}
+
+	return EquipmentComponent;
+}
+
+UBG_InventoryComponent* UBG_WeaponFireComponent::GetInventoryComponent(const TCHAR* OperationName) const
+{
+	if (!CachedCharacter)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because CachedCharacter was null."), *GetNameSafe(this), OperationName);
+		return nullptr;
+	}
+
+	UBG_InventoryComponent* InventoryComponent = CachedCharacter->GetInventoryComponent();
+	if (!InventoryComponent)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because InventoryComponent was null."), *GetNameSafe(this), OperationName);
+		return nullptr;
+	}
+
+	return InventoryComponent;
+}
+
+UBG_ItemDataRegistrySubsystem* UBG_WeaponFireComponent::GetItemDataRegistrySubsystem(const TCHAR* OperationName) const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName);
+		return nullptr;
+	}
+
+	UGameInstance* GameInstance = World->GetGameInstance();
+	if (!GameInstance)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this), OperationName);
+		return nullptr;
+	}
+
+	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GameInstance->GetSubsystem<UBG_ItemDataRegistrySubsystem>();
+	if (!RegistrySubsystem)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because UBG_ItemDataRegistrySubsystem was null."), *GetNameSafe(this), OperationName);
+		return nullptr;
+	}
+
+	return RegistrySubsystem;
+}
+
+const FBG_WeaponItemDataRow* UBG_WeaponFireComponent::GetActiveWeaponItemRow(const TCHAR* OperationName) const
+{
+	FGameplayTag WeaponItemTag;
+	const FBG_WeaponItemDataRow* WeaponRow = nullptr;
+	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
+	return GetActiveWeaponContext(WeaponItemTag, WeaponRow, WeaponSlot, OperationName) ? WeaponRow : nullptr;
+}
+
+bool UBG_WeaponFireComponent::GetActiveWeaponContext(
+	FGameplayTag& OutWeaponItemTag,
+	const FBG_WeaponItemDataRow*& OutWeaponRow,
+	EBG_EquipmentSlot& OutWeaponSlot,
+	const TCHAR* OperationName) const
+{
+	OutWeaponItemTag = FGameplayTag();
+	OutWeaponRow = nullptr;
+	OutWeaponSlot = EBG_EquipmentSlot::None;
+
+	const UBG_EquipmentComponent* EquipmentComponent = GetEquipmentComponent(OperationName);
+	if (!EquipmentComponent)
+	{
+		return false;
+	}
+
+	OutWeaponSlot = EquipmentComponent->GetActiveWeaponSlot();
+	if (OutWeaponSlot == EBG_EquipmentSlot::None)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because no active weapon slot was selected."), *GetNameSafe(this), OperationName);
+		return false;
+	}
+
+	OutWeaponItemTag = EquipmentComponent->GetActiveWeaponItemTag();
+	if (!OutWeaponItemTag.IsValid())
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because active weapon tag was invalid."), *GetNameSafe(this), OperationName);
+		return false;
+	}
+
+	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GetItemDataRegistrySubsystem(OperationName);
+	if (!RegistrySubsystem)
+	{
+		return false;
+	}
+
+	OutWeaponRow = RegistrySubsystem->FindTypedItemRow<FBG_WeaponItemDataRow>(EBG_ItemType::Weapon, OutWeaponItemTag);
+	if (!OutWeaponRow)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because weapon row was not found for %s."), *GetNameSafe(this), OperationName, *OutWeaponItemTag.ToString());
+		return false;
+	}
+
+	return true;
+}
+
+void UBG_WeaponFireComponent::SyncAmmoFromEquipment()
+{
+	FGameplayTag WeaponItemTag;
+	const FBG_WeaponItemDataRow* WeaponRow = nullptr;
+	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
+	if (!GetActiveWeaponContext(WeaponItemTag, WeaponRow, WeaponSlot, TEXT("SyncAmmoFromEquipment")) || !WeaponRow)
+	{
+		ApplyTemporaryAmmoProfileIfNeeded(TEXT("SyncAmmoFromEquipment"));
+		BroadcastAmmoState();
+		return;
+	}
+
+	if (UBG_EquipmentComponent* EquipmentComponent = GetEquipmentComponent(TEXT("SyncAmmoFromEquipment")))
+	{
+		CurrentMaxMagazineAmmo = FMath::Max(0, WeaponRow->MagazineSize);
+		CurrentMagazineAmmo = FMath::Clamp(EquipmentComponent->GetLoadedAmmo(WeaponSlot), 0, CurrentMaxMagazineAmmo);
+		RefreshReserveAmmo();
+		BroadcastAmmoState();
+	}
+}
+
+void UBG_WeaponFireComponent::RefreshReserveAmmo()
+{
+	const FBG_WeaponItemDataRow* WeaponRow = GetActiveWeaponItemRow(TEXT("RefreshReserveAmmo"));
+	if (!WeaponRow || !WeaponRow->AmmoItemTag.IsValid())
+	{
+		CurrentReserveAmmo = 0;
+		return;
+	}
+
+	if (UBG_InventoryComponent* InventoryComponent = GetInventoryComponent(TEXT("RefreshReserveAmmo")))
+	{
+		CurrentReserveAmmo = FMath::Max(0, InventoryComponent->GetQuantity(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag));
+		return;
+	}
+
+	CurrentReserveAmmo = 0;
+}
+
+bool UBG_WeaponFireComponent::ApplyTemporaryAmmoProfileIfNeeded(const TCHAR* OperationName)
+{
+	const FBGWeaponAmmoSettings* AmmoSettings = ResolveAmmoSettings(CurrentWeaponPoseType);
+	if (!AmmoSettings || CurrentWeaponPoseType == EBGWeaponPoseType::None)
+	{
+		CurrentMagazineAmmo = 0;
+		CurrentReserveAmmo = 0;
+		CurrentMaxMagazineAmmo = 0;
+		return false;
+	}
+
+	const int32 NewMaxMagazineAmmo = FMath::Max(0, AmmoSettings->MaxMagazineAmmo);
+	if (NewMaxMagazineAmmo <= 0)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because temporary magazine size was invalid. Pose=%s"),
+			*GetNameSafe(this),
+			OperationName,
+			*UEnum::GetValueAsString(CurrentWeaponPoseType));
+		CurrentMagazineAmmo = 0;
+		CurrentReserveAmmo = 0;
+		CurrentMaxMagazineAmmo = 0;
+		return false;
+	}
+
+	if (CurrentMaxMagazineAmmo != NewMaxMagazineAmmo)
+	{
+		CurrentMaxMagazineAmmo = NewMaxMagazineAmmo;
+		CurrentMagazineAmmo = NewMaxMagazineAmmo;
+		CurrentReserveAmmo = FMath::Max(0, AmmoSettings->MaxReserveAmmo);
+	}
+
+	return true;
+}
+
+bool UBG_WeaponFireComponent::TryStartTemporaryReload()
+{
+	if (!CachedCharacter)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartTemporaryReload failed because CachedCharacter was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	if (CurrentWeaponPoseType == EBGWeaponPoseType::None || CurrentMagazineAmmo >= CurrentMaxMagazineAmmo)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartTemporaryReload failed because temporary reload was not possible. CurrentMagazineAmmo=%d CurrentMaxMagazineAmmo=%d"), *GetNameSafe(this), CurrentMagazineAmmo, CurrentMaxMagazineAmmo);
+		return false;
+	}
+
+	bIsHoldingFireInput = false;
+	StopAutomaticFire();
+	const float ReloadDuration = FMath::Max(0.f, TemporaryReloadDuration);
+	CachedCharacter->StartTimedCharacterState(EBGCharacterState::Reloading, ReloadDuration);
+	Multicast_PlayReloadAnimation(CachedCharacter->GetEquippedWeaponPoseType());
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
+		if (ReloadDuration <= KINDA_SMALL_NUMBER)
+		{
+			CompleteTemporaryReload();
+			return true;
+		}
+
+		World->GetTimerManager().SetTimer(ReloadTimerHandle, this, &UBG_WeaponFireComponent::CompleteTemporaryReload, ReloadDuration, false);
+		return true;
+	}
+
+	UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartTemporaryReload failed because World was null."), *GetNameSafe(this));
+	return false;
+}
+
+void UBG_WeaponFireComponent::CompleteTemporaryReload()
+{
+	const int32 AmmoNeeded = FMath::Max(0, CurrentMaxMagazineAmmo - CurrentMagazineAmmo);
+	const int32 AmmoToLoad = FMath::Min(AmmoNeeded, CurrentReserveAmmo);
+	if (AmmoToLoad <= 0)
+	{
+		if (AmmoNeeded > 0)
+		{
+			UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CompleteTemporaryReload using code-only refill because no reserve ammo is available."), *GetNameSafe(this));
+			CurrentMagazineAmmo = CurrentMaxMagazineAmmo;
+			BroadcastAmmoState();
+			if (CachedCharacter)
+			{
+				CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
+			}
+			return;
+		}
+
+		CancelReload();
+		return;
+	}
+
+	CurrentMagazineAmmo += AmmoToLoad;
+	CurrentReserveAmmo -= AmmoToLoad;
+	BroadcastAmmoState();
+
+	if (CachedCharacter)
+	{
+		CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
+	}
+}
+
+bool UBG_WeaponFireComponent::TryStartReload()
+{
+	if (!CachedCharacter)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartReload failed because CachedCharacter was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	if (!CanReloadWeapon())
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartReload failed because reload was not currently possible. CurrentWeaponPoseType=%s, CurrentMagazineAmmo=%d, CurrentMaxMagazineAmmo=%d, CurrentReserveAmmo=%d"),
+			*GetNameSafe(this), *UEnum::GetValueAsString(CurrentWeaponPoseType), CurrentMagazineAmmo, CurrentMaxMagazineAmmo, CurrentReserveAmmo);
+		return false;
+	}
+
+	FGameplayTag WeaponItemTag;
+	const FBG_WeaponItemDataRow* WeaponRow = nullptr;
+	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
+	if (!GetActiveWeaponContext(WeaponItemTag, WeaponRow, WeaponSlot, TEXT("TryStartReload")) || !WeaponRow)
+	{
+		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: TryStartReload active weapon context failed, falling back to temporary reload."), *GetNameSafe(this));
+		return TryStartTemporaryReload();
+	}
+
+	bIsHoldingFireInput = false;
+	StopAutomaticFire();
+	CachedCharacter->StartTimedCharacterState(EBGCharacterState::Reloading, WeaponRow->ReloadDuration);
+	Multicast_PlayReloadAnimation(CachedCharacter->GetEquippedWeaponPoseType());
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
+		if (WeaponRow->ReloadDuration <= KINDA_SMALL_NUMBER)
+		{
+			CompleteReload();
+			return true;
+		}
+
+		World->GetTimerManager().SetTimer(ReloadTimerHandle, this, &UBG_WeaponFireComponent::CompleteReload, WeaponRow->ReloadDuration, false);
+		return true;
+	}
+
+	UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartReload failed because World was null."), *GetNameSafe(this));
+	return false;
+}
+
+void UBG_WeaponFireComponent::CompleteReload()
+{
+	FGameplayTag WeaponItemTag;
+	const FBG_WeaponItemDataRow* WeaponRow = nullptr;
+	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
+	if (!GetActiveWeaponContext(WeaponItemTag, WeaponRow, WeaponSlot, TEXT("CompleteReload")) || !WeaponRow)
+	{
+		CancelReload();
+		return;
+	}
+
+	UBG_EquipmentComponent* EquipmentComponent = GetEquipmentComponent(TEXT("CompleteReload"));
+	UBG_InventoryComponent* InventoryComponent = GetInventoryComponent(TEXT("CompleteReload"));
+	if (!EquipmentComponent || !InventoryComponent)
+	{
+		CancelReload();
+		return;
+	}
+
+	const int32 MagazineSize = FMath::Max(0, WeaponRow->MagazineSize);
+	const int32 CurrentLoadedAmmo = FMath::Clamp(EquipmentComponent->GetLoadedAmmo(WeaponSlot), 0, MagazineSize);
+	const int32 AmmoNeeded = MagazineSize - CurrentLoadedAmmo;
+	if (AmmoNeeded <= 0)
+	{
+		SyncAmmoFromEquipment();
+		if (CachedCharacter)
+		{
+			CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
+		}
+		return;
+	}
+
+	int32 RemovedAmmo = 0;
+	if (!InventoryComponent->TryRemoveItem(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag, AmmoNeeded, RemovedAmmo) || RemovedAmmo <= 0)
+	{
+		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CompleteReload could not remove ammo from inventory for %s. Falling back to code-only reload."), *GetNameSafe(this), *WeaponRow->AmmoItemTag.ToString());
+		const int32 CodeOnlyAmmo = AmmoNeeded;
+		EquipmentComponent->TryLoadAmmo(WeaponSlot, CurrentLoadedAmmo + CodeOnlyAmmo);
+		SyncAmmoFromEquipment();
+		if (CachedCharacter)
+		{
+			CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
+		}
+		return;
+	}
+
+	EquipmentComponent->TryLoadAmmo(WeaponSlot, CurrentLoadedAmmo + RemovedAmmo);
+	SyncAmmoFromEquipment();
+
+	if (CachedCharacter)
+	{
+		CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
+	}
+}
+
+void UBG_WeaponFireComponent::CancelReload()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
+	}
+
+	if (CachedCharacter)
+	{
+		CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
+	}
+}
+
+void UBG_WeaponFireComponent::PlayReloadAnimation(EBGWeaponPoseType WeaponPoseType)
+{
+	if (!CachedCharacter)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* BodyMesh = CachedCharacter->GetBodyAnimationMesh();
+	if (!BodyMesh || !BodyMesh->GetAnimInstance())
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: PlayReloadAnimation failed because body mesh or anim instance was null."), *GetNameSafe(this));
+		return;
+	}
+
+	UAnimMontage* MontageToPlay = nullptr;
+	switch (WeaponPoseType)
+	{
+	case EBGWeaponPoseType::Pistol:
+		MontageToPlay = PistolReloadMontage;
+		break;
+	case EBGWeaponPoseType::Rifle:
+		MontageToPlay = RifleReloadMontage;
+		break;
+	case EBGWeaponPoseType::Shotgun:
+		MontageToPlay = ShotgunReloadMontage;
+		break;
+	default:
+		break;
+	}
+
+	if (!MontageToPlay)
+	{
+		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: PlayReloadAnimation could not play montage because reload montage is not assigned for pose type %s."), *GetNameSafe(this), *UEnum::GetValueAsString(WeaponPoseType));
+		return;
+	}
+
+	BodyMesh->GetAnimInstance()->Montage_Play(MontageToPlay);
+}
+
+void UBG_WeaponFireComponent::Multicast_PlayReloadAnimation_Implementation(EBGWeaponPoseType WeaponPoseType)
+{
+	PlayReloadAnimation(WeaponPoseType);
+}
+
 const FBGWeaponFireSettings* UBG_WeaponFireComponent::ResolveFireSettings(EBGWeaponPoseType WeaponPoseType) const
 {
 	switch (WeaponPoseType)
@@ -548,4 +1099,16 @@ void UBG_WeaponFireComponent::Multicast_PlayWeaponFireDebug_Implementation(FVect
 void UBG_WeaponFireComponent::OnRep_AmmoState()
 {
 	BroadcastAmmoState();
+}
+
+void UBG_WeaponFireComponent::OnRep_FireAnimationSequence()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: OnRep_FireAnimationSequence failed because World was null."), *GetNameSafe(this));
+		return;
+	}
+
+	LastFireAnimationWorldTime = World->GetTimeSeconds();
 }

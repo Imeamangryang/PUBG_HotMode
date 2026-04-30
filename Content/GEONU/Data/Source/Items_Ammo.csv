@@ -1,3 +1,3 @@
-Name,ItemType,ItemTag,DisplayName,Description,Icon,WorldStaticMesh,UnitWeight,bStackable,MaxStackSize
+Name,ItemType,ItemTag,DisplayName,Description,Icon,WorldItemClass,UnitWeight,bStackable,MaxStackSize
 Item.Ammo.556mm,Ammo,Item.Ammo.556mm,5.56mm,5.56mm ammunition,Texture2D'/Game/GEONU/Textures/T_BulletAutomatic.T_BulletAutomatic',,0.5,true,300
 Item.Ammo.762mm,Ammo,Item.Ammo.762mm,7.62mm,7.62mm ammunition,Texture2D'/Game/GEONU/Textures/T_BulletAutomatic.T_BulletAutomatic',,0.7,true,300

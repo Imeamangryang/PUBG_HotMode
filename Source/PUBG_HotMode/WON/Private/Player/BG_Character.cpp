@@ -4,6 +4,11 @@
 #include "Combat/BG_WeaponFireComponent.h"
 #include "Inventory/BG_EquipmentComponent.h"
 #include "Inventory/BG_InventoryComponent.h"
+#include "Inventory/BG_ItemUseComponent.h"
+#include "Inventory/BG_WorldItemBase.h"
+#include "Player/BG_InteractionAnimationComponent.h"
+#include "Player/BG_PlayerController.h"
+#include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -14,8 +19,10 @@
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "GameFramework/BG_BattleGameMode.h"
 #include "Net/UnrealNetwork.h"
 #include "Character/Components/ParkourComponent.h"
+#include "TimerManager.h"
 
 DEFINE_LOG_CATEGORY(LogBGCharacter);
 
@@ -24,8 +31,9 @@ ABG_Character::ABG_Character()
 	PrimaryActorTick.bCanEverTick = true;
 	bReplicates = true;
 
-	bUseControllerRotationYaw = false;
-	GetCharacterMovement()->bOrientRotationToMovement = true;
+	bUseControllerRotationYaw = true;
+	GetCharacterMovement()->bOrientRotationToMovement = false;
+	GetCharacterMovement()->bUseControllerDesiredRotation = false;
 	
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
@@ -39,7 +47,9 @@ ABG_Character::ABG_Character()
 	HealthComponent = CreateDefaultSubobject<UBG_HealthComponent>(TEXT("HealthComponent"));
 	InventoryComponent = CreateDefaultSubobject<UBG_InventoryComponent>(TEXT("InventoryComponent"));
 	EquipmentComponent = CreateDefaultSubobject<UBG_EquipmentComponent>(TEXT("EquipmentComponent"));
+	ItemUseComponent = CreateDefaultSubobject<UBG_ItemUseComponent>(TEXT("ItemUseComponent"));
 	WeaponFireComponent = CreateDefaultSubobject<UBG_WeaponFireComponent>(TEXT("WeaponFireComponent"));
+	InteractionAnimationComponent = CreateDefaultSubobject<UBG_InteractionAnimationComponent>(TEXT("InteractionAnimationComponent"));
 
 	WeaponAttachPoint = CreateDefaultSubobject<USceneComponent>(TEXT("WeaponAttachPoint"));
 	WeaponAttachPoint->SetupAttachment(GetMesh());
@@ -81,6 +91,7 @@ void ABG_Character::BeginPlay()
 	if (HealthComponent)
 	{
 		HealthComponent->OnDeathStateChanged.AddDynamic(this, &ABG_Character::HandleHealthDeathStateChanged);
+		HealthComponent->OnDamaged.AddDynamic(this, &ABG_Character::HandleDamaged);
 		HandleHealthDeathStateChanged(HealthComponent->IsDead());
 	}
 	else
@@ -116,7 +127,7 @@ void ABG_Character::BeginPlay()
 	}
 
 	// 변수명을 Children에서 ChildComps로 변경하여 충돌 방지
-	if (USkeletalMeshComponent* Body = Cast<USkeletalMeshComponent>(GetDefaultSubobjectByName(TEXT("Body"))))
+	if (USkeletalMeshComponent* Body = GetBodyAnimationMesh())
 	{
 		TArray<USceneComponent*> ChildComps;
 		Body->GetChildrenComponents(true, ChildComps);
@@ -159,7 +170,25 @@ void ABG_Character::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 
 void ABG_Character::MoveFromInput(const FInputActionValue& Value)
 {
+	if (bIsDead)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: MoveFromInput failed because character is dead."), *GetNameSafe(this));
+		return;
+	}
+
 	const FVector2D MovementVector = Value.Get<FVector2D>();
+	if (!MovementVector.IsNearlyZero())
+	{
+		if (ItemUseComponent)
+		{
+			ItemUseComponent->NotifyMovementInput();
+		}
+		else
+		{
+			UE_LOG(LogBGCharacter, Error, TEXT("%s: MoveFromInput could not notify item use movement because ItemUseComponent was null."), *GetNameSafe(this));
+		}
+	}
+
 	if (Controller && !MovementVector.IsNearlyZero())
 	{
 		const FRotator Rotation = Controller->GetControlRotation();
@@ -174,6 +203,12 @@ void ABG_Character::MoveFromInput(const FInputActionValue& Value)
 
 void ABG_Character::LookFromInput(const FInputActionValue& Value)
 {
+	if (bIsDead)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: LookFromInput failed because character is dead."), *GetNameSafe(this));
+		return;
+	}
+
 	const FVector2D LookAxisVector = Value.Get<FVector2D>();
 	if (Controller)
 	{
@@ -184,6 +219,12 @@ void ABG_Character::LookFromInput(const FInputActionValue& Value)
 
 void ABG_Character::StartJumpFromInput()
 {
+	if (bIsDead)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: StartJumpFromInput failed because character is dead."), *GetNameSafe(this));
+		return;
+	}
+
 	if (ParkourComponent)
 	{
 		ParkourComponent -> TryParkour();
@@ -201,8 +242,23 @@ void ABG_Character::StopJumpFromInput()
 
 void ABG_Character::StartPrimaryActionFromInput()
 {
+	if (bIsDead)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: StartPrimaryActionFromInput failed because character is dead."), *GetNameSafe(this));
+		return;
+	}
+
 	if (bIsWeaponEquipped)
 	{
+		if (ItemUseComponent)
+		{
+			ItemUseComponent->NotifyFireInput();
+		}
+		else
+		{
+			UE_LOG(LogBGCharacter, Error, TEXT("%s: StartPrimaryActionFromInput could not notify item use fire because ItemUseComponent was null."), *GetNameSafe(this));
+		}
+
 		if (!WeaponFireComponent)
 		{
 			UE_LOG(LogBGCharacter, Error, TEXT("%s: StartPrimaryActionFromInput failed because WeaponFireComponent was null."), *GetNameSafe(this));
@@ -234,7 +290,30 @@ void ABG_Character::StopPrimaryActionFromInput()
 
 void ABG_Character::InteractFromInput()
 {
+	if (bIsDead)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: InteractFromInput failed because character is dead."), *GetNameSafe(this));
+		return;
+	}
+
 	TryInteractWithCurrentTarget();
+}
+
+void ABG_Character::ReloadFromInput()
+{
+	if (bIsDead)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: ReloadFromInput failed because character is dead."), *GetNameSafe(this));
+		return;
+	}
+
+	if (!WeaponFireComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: ReloadFromInput failed because WeaponFireComponent was null."), *GetNameSafe(this));
+		return;
+	}
+
+	WeaponFireComponent->RequestReload();
 }
 
 void ABG_Character::StartAimFromInput()
@@ -258,23 +337,17 @@ void ABG_Character::StopAimFromInput()
 
 void ABG_Character::ToggleCrouchFromInput()
 {
-	if (bIsDead)
-	{
-		UE_LOG(LogBGCharacter, Error, TEXT("%s: ToggleCrouchFromInput failed because character is dead."), *GetNameSafe(this));
-		return;
-	}
+	if (bIsDead || !bCanEnterCrouch) return;
 
-	if (!bCanEnterCrouch)
-	{
-		UE_LOG(LogBGCharacter, Error, TEXT("%s: ToggleCrouchFromInput failed because bCanEnterCrouch is false."), *GetNameSafe(this));
-		return;
-	}
-
-	if (bIsProne)
+	// 1. 만약 엎드려 있었다면 엎드리기 해제 (즉시)
+	if (bIsProne) 
 	{
 		bIsProne = false;
+		// 엎드려 있다가 Crouch 키를 누르면 바로 앉은 상태로 가게 하거나, 
+		// 혹은 서게 한 뒤 Crouch를 수행하게 할 수 있습니다.
 	}
 
+	// 2. 언리얼 기본 Crouch 상태 토글
 	if (bIsCrouched)
 	{
 		UnCrouch();
@@ -289,24 +362,24 @@ void ABG_Character::ToggleCrouchFromInput()
 
 void ABG_Character::ToggleProneFromInput()
 {
-	if (bIsDead)
-	{
-		UE_LOG(LogBGCharacter, Error, TEXT("%s: ToggleProneFromInput failed because character is dead."), *GetNameSafe(this));
-		return;
-	}
+	if (bIsDead || !bCanEnterProne) return;
 
-	if (!bCanEnterProne)
-	{
-		UE_LOG(LogBGCharacter, Error, TEXT("%s: ToggleProneFromInput failed because bCanEnterProne is false."), *GetNameSafe(this));
-		return;
-	}
-
+	// 1. 만약 앉아 있었다면 앉기 해제 (중요!)
 	if (bIsCrouched)
 	{
 		UnCrouch();
 	}
 
+	// 2. 엎드리기 토글
 	bIsProne = !bIsProne;
+
+	// 3. 만약 엎드리기로 들어갔다면, 앉기 변수도 확실히 False 처리
+	if (bIsProne)
+	{
+		// UnCrouch()가 내부적으로 bIsCrouched를 false로 만들지만, 
+		// 애니메이션 블루프린트 전달용 변수가 있다면 여기서 명시적 정리
+	}
+
 	UpdateDerivedState();
 }
 
@@ -350,6 +423,15 @@ void ABG_Character::StopLeanRightFromInput()
 
 void ABG_Character::Req_PrimaryAction()
 {
+	if (ItemUseComponent)
+	{
+		ItemUseComponent->NotifyFireInput();
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: Req_PrimaryAction could not notify item use fire because ItemUseComponent was null."), *GetNameSafe(this));
+	}
+
 	// 총이 장착되어 있으면 근접 공격 대신 발사 경로로 보낸다.
 	if (bIsWeaponEquipped)
 	{
@@ -415,7 +497,7 @@ bool ABG_Character::Server_ExecuteMeleeAttack_Validate()
 void ABG_Character::Multicast_PlayAttackEffects_Implementation()
 {
 	// 'Body' 메쉬의 AnimInstance를 가져와 몽타주 재생
-	if (USkeletalMeshComponent* Body = Cast<USkeletalMeshComponent>(GetDefaultSubobjectByName(TEXT("Body"))))
+	if (USkeletalMeshComponent* Body = GetBodyAnimationMesh())
 	{
 		if (MeleePunchMontage && Body->GetAnimInstance())
 		{
@@ -426,6 +508,23 @@ void ABG_Character::Multicast_PlayAttackEffects_Implementation()
 	{
 		UE_LOG(LogBGCharacter, Error, TEXT("%s: Multicast_PlayAttackEffects failed because Body mesh was null."), *GetNameSafe(this));
 	}
+}
+
+USkeletalMeshComponent* ABG_Character::GetBodyAnimationMesh()
+{
+	if (USkeletalMeshComponent* Body = Cast<USkeletalMeshComponent>(GetDefaultSubobjectByName(TEXT("Body"))))
+	{
+		return Body;
+	}
+
+	USkeletalMeshComponent* MeshComponent = GetMesh();
+	if (!MeshComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: GetBodyAnimationMesh failed because GetMesh returned null."), *GetNameSafe(this));
+		return nullptr;
+	}
+
+	return MeshComponent;
 }
 
 void ABG_Character::ProcessMeleeHitDetection()
@@ -538,6 +637,22 @@ void ABG_Character::OnParachuteAction_Implementation()
 
 void ABG_Character::SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped)
 {
+	const bool bNewEffectiveWeaponEquipped = bNewWeaponEquipped && NewWeaponPoseType != EBGWeaponPoseType::None;
+	const bool bWeaponStateChanging = EquippedWeaponPoseType != NewWeaponPoseType
+		|| bIsWeaponEquipped != bNewEffectiveWeaponEquipped;
+
+	if (bWeaponStateChanging)
+	{
+		if (ItemUseComponent)
+		{
+			ItemUseComponent->NotifyWeaponSwitch();
+		}
+		else
+		{
+			UE_LOG(LogBGCharacter, Error, TEXT("%s: SetWeaponState could not notify item use weapon switch because ItemUseComponent was null."), *GetNameSafe(this));
+		}
+	}
+
 	if (!HasAuthority())
 	{
 		Server_SetWeaponState(NewWeaponPoseType, bNewWeaponEquipped);
@@ -581,6 +696,167 @@ void ABG_Character::SetCurrentInteractableWeapon(AActor* NewInteractableWeapon)
 	CurrentInteractableWeapon = NewInteractableWeapon;
 }
 
+ABG_WorldItemBase* ABG_Character::GetCurrentWorldItem() const
+{
+	return Cast<ABG_WorldItemBase>(CurrentInteractableWeapon);
+}
+
+TArray<ABG_WorldItemBase*> ABG_Character::GetNearbyWorldItems() const
+{
+	TArray<ABG_WorldItemBase*> WorldItems;
+	for (AActor* CandidateActor : NearbyInteractableWeapons)
+	{
+		if (ABG_WorldItemBase* WorldItem = Cast<ABG_WorldItemBase>(CandidateActor))
+		{
+			WorldItems.Add(WorldItem);
+		}
+	}
+
+	return WorldItems;
+}
+
+void ABG_Character::NotifySuccessfulPickup(EBG_ItemType PickedUpItemType)
+{
+	if (!HasAuthority())
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: NotifySuccessfulPickup failed because character had no authority. ItemType=%s"),
+			*GetNameSafe(this),
+			*StaticEnum<EBG_ItemType>()->GetNameStringByValue(static_cast<int64>(PickedUpItemType)));
+		return;
+	}
+
+	Multicast_PlayPickupMontage(PickedUpItemType);
+}
+
+void ABG_Character::SetCharacterStateValue(EBGCharacterState NewCharacterState)
+{
+	if (CharacterState == EBGCharacterState::Dead && NewCharacterState != EBGCharacterState::Dead)
+	{
+		return;
+	}
+
+	CharacterState = NewCharacterState;
+	UpdateDerivedState();
+}
+
+void ABG_Character::StartTimedCharacterState(EBGCharacterState NewCharacterState, float Duration)
+{
+	SetCharacterStateValue(NewCharacterState);
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: StartTimedCharacterState failed because World was null."), *GetNameSafe(this));
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(CharacterStateTimerHandle);
+	if (Duration > KINDA_SMALL_NUMBER)
+	{
+		World->GetTimerManager().SetTimer(
+			CharacterStateTimerHandle,
+			FTimerDelegate::CreateUObject(this, &ABG_Character::FinishTimedCharacterState, NewCharacterState),
+			Duration,
+			false);
+	}
+}
+
+void ABG_Character::FinishTimedCharacterState(EBGCharacterState ExpectedCharacterState)
+{
+	if (CharacterState != ExpectedCharacterState || CharacterState == EBGCharacterState::Dead)
+	{
+		return;
+	}
+
+	CharacterState = EBGCharacterState::Idle;
+	UpdateDerivedState();
+}
+
+FName ABG_Character::GetDesiredWeaponSocketName(EBG_EquipmentSlot WeaponSlot) const
+{
+	if (EquipmentComponent && EquipmentComponent->GetActiveWeaponSlot() == WeaponSlot)
+	{
+		return WeaponHandSocketName;
+	}
+
+	return WeaponBackSocketName;
+}
+
+void ABG_Character::RequestPickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity)
+{
+	if (HasAuthority())
+	{
+		EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
+		if (!IsValid(WorldItem))
+		{
+			Client_ReceiveInventoryFailure(EBGInventoryFailReason::InvalidItem, EBG_ItemType::None, FGameplayTag());
+			return;
+		}
+
+		if (!WorldItem->TryPickup(this, Quantity, FailReason))
+		{
+			Client_ReceiveInventoryFailure(FailReason, WorldItem->GetItemType(), WorldItem->GetItemTag());
+		}
+		return;
+	}
+
+	Server_RequestPickupWorldItem(WorldItem, Quantity);
+}
+
+void ABG_Character::Server_RequestPickupWorldItem_Implementation(
+	ABG_WorldItemBase* WorldItem,
+	int32 Quantity)
+{
+	if (!IsValid(WorldItem))
+	{
+		Client_ReceiveInventoryFailure(EBGInventoryFailReason::InvalidItem, EBG_ItemType::None, FGameplayTag());
+		return;
+	}
+
+	EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
+	if (!WorldItem->TryPickup(this, Quantity, FailReason))
+	{
+		Client_ReceiveInventoryFailure(FailReason, WorldItem->GetItemType(), WorldItem->GetItemTag());
+	}
+}
+
+void ABG_Character::Client_ReceiveInventoryFailure_Implementation(
+	EBGInventoryFailReason FailReason,
+	EBG_ItemType ItemType,
+	FGameplayTag ItemTag)
+{
+	const UEnum* FailReasonEnum = StaticEnum<EBGInventoryFailReason>();
+	const UEnum* ItemTypeEnum = StaticEnum<EBG_ItemType>();
+	const FString FailReasonName = FailReasonEnum
+		? FailReasonEnum->GetNameStringByValue(static_cast<int64>(FailReason))
+		: TEXT("<Unknown>");
+	const FString ItemTypeName = ItemTypeEnum
+		? ItemTypeEnum->GetNameStringByValue(static_cast<int64>(ItemType))
+		: TEXT("<Unknown>");
+
+	const FString FailureMessage = FString::Printf(
+		TEXT("%s: Inventory request failed. Reason=%s, ItemType=%s, ItemTag=%s."),
+		*GetNameSafe(this),
+		*FailReasonName,
+		*ItemTypeName,
+		*ItemTag.ToString());
+
+	UE_LOG(LogBGCharacter, Warning, TEXT("%s"), *FailureMessage);
+	if (ABG_PlayerController* BGPlayerController = Cast<ABG_PlayerController>(GetController()))
+	{
+		BGPlayerController->NotifyInventoryFailure(FailReason, ItemType, ItemTag);
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: Client_ReceiveInventoryFailure could not notify ViewModel because controller was not ABG_PlayerController."), *GetNameSafe(this));
+	}
+
+	if (GEngine && GetWorld() && GetWorld()->GetNetMode() != NM_DedicatedServer)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red, FailureMessage);
+	}
+}
+
 void ABG_Character::OnInteractionRangeBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 	if (!OverlappedComponent)
@@ -607,6 +883,7 @@ void ABG_Character::OnInteractionRangeBeginOverlap(UPrimitiveComponent* Overlapp
 
 	NearbyInteractableWeapons.AddUnique(OtherActor);
 	RefreshCurrentInteractableWeapon();
+	OnNearbyWorldItemsChanged.Broadcast();
 }
 
 void ABG_Character::OnInteractionRangeEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
@@ -624,6 +901,7 @@ void ABG_Character::OnInteractionRangeEndOverlap(UPrimitiveComponent* Overlapped
 
 	NearbyInteractableWeapons.Remove(OtherActor);
 	RefreshCurrentInteractableWeapon();
+	OnNearbyWorldItemsChanged.Broadcast();
 }
 
 void ABG_Character::RefreshCurrentInteractableWeapon()
@@ -662,6 +940,11 @@ bool ABG_Character::IsWeaponInteractableActor(const AActor* CandidateActor) cons
 		return false;
 	}
 
+	if (CandidateActor->IsA<ABG_WorldItemBase>())
+	{
+		return true;
+	}
+
 	TArray<UPrimitiveComponent*> PrimitiveComponents;
 	CandidateActor->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
 
@@ -686,6 +969,12 @@ void ABG_Character::TryInteractWithCurrentTarget()
 {
 	if (CurrentInteractableWeapon)
 	{
+		if (ABG_WorldItemBase* WorldItem = Cast<ABG_WorldItemBase>(CurrentInteractableWeapon))
+		{
+			RequestPickupWorldItem(WorldItem, WorldItem->GetQuantity());
+			return;
+		}
+
 		const FString DebugMessage = FString::Printf(TEXT("%s: Interact detected with %s."),
 			*GetNameSafe(this),
 			*GetNameSafe(CurrentInteractableWeapon));
@@ -725,33 +1014,133 @@ void ABG_Character::OnRep_EquippedWeaponPoseType()
 	ApplyWeaponMovementState();
 }
 
+void ABG_Character::Multicast_PlayPickupMontage_Implementation(EBG_ItemType PickedUpItemType)
+{
+	if (!InteractionAnimationComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: Multicast_PlayPickupMontage failed because InteractionAnimationComponent was null."), *GetNameSafe(this));
+		return;
+	}
+
+	const float PickupDuration = InteractionAnimationComponent->GetPickupMontageDuration(PickedUpItemType);
+	if (PickupDuration > KINDA_SMALL_NUMBER && !bIsDead)
+	{
+		StartTimedCharacterState(EBGCharacterState::Equipping, PickupDuration);
+	}
+
+	InteractionAnimationComponent->PlayPickupMontage(PickedUpItemType);
+}
+
 void ABG_Character::HandleHealthDeathStateChanged(bool bNewIsDead)
 {
 	if (bNewIsDead)
 	{
+		ClearTimedCharacterState();
 		CharacterState = EBGCharacterState::Dead;
+		bIsAiming = false;
+		bIsProne = false;
+		LeanDirection = EBGLeanDirection::None;
+
+		if (WeaponFireComponent && (HasAuthority() || IsLocallyControlled()))
+		{
+			WeaponFireComponent->RequestStopFire();
+		}
+
+		if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+		{
+			MovementComponent->DisableMovement();
+		}
+		else
+		{
+			UE_LOG(LogBGCharacter, Error, TEXT("%s: HandleHealthDeathStateChanged failed because CharacterMovement was null."), *GetNameSafe(this));
+		}
+
+		if (ABG_PlayerController* BGPlayerController = Cast<ABG_PlayerController>(GetController()))
+		{
+			BGPlayerController->HandleControlledCharacterDeath(this);
+		}
+
+		if (HasAuthority())
+		{
+			if (ABG_BattleGameMode* BattleGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ABG_BattleGameMode>() : nullptr)
+			{
+				BattleGameMode->HandlePlayerDeath(GetController(), this);
+			}
+			else
+			{
+				UE_LOG(LogBGCharacter, Error, TEXT("%s: HandleHealthDeathStateChanged could not notify BattleGameMode."), *GetNameSafe(this));
+			}
+		}
 	}
 	else if (CharacterState == EBGCharacterState::Dead)
 	{
 		CharacterState = EBGCharacterState::Idle;
+
+		if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+		{
+			MovementComponent->SetMovementMode(MOVE_Walking);
+		}
+		else
+		{
+			UE_LOG(LogBGCharacter, Error, TEXT("%s: HandleHealthDeathStateChanged failed because CharacterMovement was null during revive."), *GetNameSafe(this));
+		}
+
+		if (ABG_PlayerController* BGPlayerController = Cast<ABG_PlayerController>(GetController()))
+		{
+			BGPlayerController->HandleControlledCharacterRevived(this);
+		}
 	}
 
 	UpdateDerivedState();
+}
+
+void ABG_Character::HandleDamaged(float DamageAmount, float CurrentHP, float MaxHP, bool bNewIsDead)
+{
+	if (DamageAmount <= 0.f)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: HandleDamaged failed because DamageAmount %.2f was not positive."), *GetNameSafe(this), DamageAmount);
+		return;
+	}
+
+	if (bNewIsDead)
+	{
+		return;
+	}
+
+	Multicast_PlayHitReactMontage();
+}
+
+void ABG_Character::Multicast_PlayHitReactMontage_Implementation()
+{
+	if (!HitReactMontage)
+	{
+		return;
+	}
+
+	USkeletalMeshComponent* BodyMesh = GetBodyAnimationMesh();
+	if (!BodyMesh)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: Multicast_PlayHitReactMontage failed because BodyMesh was null."), *GetNameSafe(this));
+		return;
+	}
+
+	UAnimInstance* AnimInstance = BodyMesh->GetAnimInstance();
+	if (!AnimInstance)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: Multicast_PlayHitReactMontage failed because AnimInstance was null."), *GetNameSafe(this));
+		return;
+	}
+
+	AnimInstance->Montage_Play(HitReactMontage);
 }
 
 void ABG_Character::ApplyWeaponMovementState()
 {
 	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 	{
-		if (bIsWeaponEquipped)
-		{
-			bUseControllerRotationYaw = true;
-			MovementComponent->bOrientRotationToMovement = false;
-			return;
-		}
-
-		bUseControllerRotationYaw = false;
-		MovementComponent->bOrientRotationToMovement = true;
+		bUseControllerRotationYaw = true;
+		MovementComponent->bOrientRotationToMovement = false;
+		MovementComponent->bUseControllerDesiredRotation = false;
 		return;
 	}
 
@@ -810,6 +1199,17 @@ void ABG_Character::UpdateCharacterStance()
 	}
 
 	CharacterStance = EBGCharacterStance::Standing;
+}
+
+void ABG_Character::ClearTimedCharacterState()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(CharacterStateTimerHandle);
+		return;
+	}
+
+	UE_LOG(LogBGCharacter, Error, TEXT("%s: ClearTimedCharacterState failed because World was null."), *GetNameSafe(this));
 }
 
 bool ABG_Character::CanStartAim() const

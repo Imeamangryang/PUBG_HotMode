@@ -43,3 +43,18 @@ enum class EBG_ArmorEquipSlot : uint8
 	Helmet UMETA(DisplayName="Helmet"),
 	Vest UMETA(DisplayName="Vest")
 };
+
+UENUM(BlueprintType)
+enum class EBGInventoryFailReason : uint8
+{
+	None UMETA(DisplayName="None"),
+	InvalidItem UMETA(DisplayName="Invalid Item"),
+	InvalidQuantity UMETA(DisplayName="Invalid Quantity"),
+	TooFar UMETA(DisplayName="Too Far"),
+	Overweight UMETA(DisplayName="Overweight"),
+	SlotMismatch UMETA(DisplayName="Slot Mismatch"),
+	MissingAmmo UMETA(DisplayName="Missing Ammo"),
+	AlreadyUsingItem UMETA(DisplayName="Already Using Item"),
+	HealthCapReached UMETA(DisplayName="Health Cap Reached"),
+	ServerRejected UMETA(DisplayName="Server Rejected")
+};

@@ -5,6 +5,7 @@
 #include "BG_InventoryComponent.h"
 #include "BG_ItemDataRegistrySubsystem.h"
 #include "BG_ItemDataRow.h"
+#include "BG_WorldItemBase.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -16,6 +17,7 @@ UBG_EquipmentComponent::UBG_EquipmentComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
+	WorldItemClass = ABG_WorldItemBase::StaticClass();
 }
 
 void UBG_EquipmentComponent::OnRegister()
@@ -439,6 +441,135 @@ bool UBG_EquipmentComponent::TryClearThrowable()
 	return true;
 }
 
+void UBG_EquipmentComponent::RequestDropEquipment(EBG_EquipmentSlot EquipmentSlot)
+{
+	const AActor* Owner = GetOwner();
+	if (Owner && Owner->HasAuthority())
+	{
+		EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
+		if (!TryDropEquipment(EquipmentSlot, FailReason))
+		{
+			NotifyEquipmentFailure(FailReason, EquipmentSlot);
+		}
+		return;
+	}
+
+	Server_RequestDropEquipment(EquipmentSlot);
+}
+
+bool UBG_EquipmentComponent::TryDropEquipment(
+	EBG_EquipmentSlot EquipmentSlot,
+	EBGInventoryFailReason& OutFailReason)
+{
+	OutFailReason = EBGInventoryFailReason::ServerRejected;
+
+	if (!CanMutateEquipmentState(TEXT("TryDropEquipment")))
+	{
+		return false;
+	}
+
+	if (IsWeaponSlot(EquipmentSlot))
+	{
+		FGameplayTag RemovedWeaponItemTag;
+		int32 RemovedLoadedAmmo = 0;
+		if (!TryUnequipWeapon(EquipmentSlot, RemovedWeaponItemTag, RemovedLoadedAmmo))
+		{
+			OutFailReason = EBGInventoryFailReason::InvalidItem;
+			return false;
+		}
+
+		if (!SpawnDroppedEquipmentItem(EBG_ItemType::Weapon, RemovedWeaponItemTag, RemovedLoadedAmmo))
+		{
+			FGameplayTag RollbackReplacedWeaponItemTag;
+			int32 RollbackReplacedLoadedAmmo = 0;
+			TryEquipWeapon(EquipmentSlot, RemovedWeaponItemTag, RemovedLoadedAmmo,
+			               RollbackReplacedWeaponItemTag, RollbackReplacedLoadedAmmo);
+			OutFailReason = EBGInventoryFailReason::ServerRejected;
+			return false;
+		}
+
+		OutFailReason = EBGInventoryFailReason::None;
+		return true;
+	}
+
+	if (IsArmorSlot(EquipmentSlot))
+	{
+		FGameplayTag RemovedArmorItemTag;
+		float RemovedArmorDurability = 0.f;
+		if (!TryUnequipArmor(EquipmentSlot, RemovedArmorItemTag, RemovedArmorDurability))
+		{
+			OutFailReason = EBGInventoryFailReason::InvalidItem;
+			return false;
+		}
+
+		if (!SpawnDroppedEquipmentItem(EBG_ItemType::Armor, RemovedArmorItemTag, 0))
+		{
+			FGameplayTag RollbackReplacedArmorItemTag;
+			float RollbackReplacedArmorDurability = 0.f;
+			if (TryEquipArmor(EquipmentSlot, RemovedArmorItemTag, RollbackReplacedArmorItemTag,
+			                  RollbackReplacedArmorDurability))
+			{
+				SetArmorDurability(EquipmentSlot, RemovedArmorDurability);
+			}
+			OutFailReason = EBGInventoryFailReason::ServerRejected;
+			return false;
+		}
+
+		OutFailReason = EBGInventoryFailReason::None;
+		return true;
+	}
+
+	if (EquipmentSlot == EBG_EquipmentSlot::Backpack)
+	{
+		FGameplayTag RemovedBackpackItemTag;
+		if (!TryUnequipBackpack(RemovedBackpackItemTag))
+		{
+			OutFailReason = EBGInventoryFailReason::Overweight;
+			return false;
+		}
+
+		if (!SpawnDroppedEquipmentItem(EBG_ItemType::Backpack, RemovedBackpackItemTag, 0))
+		{
+			FGameplayTag RollbackReplacedBackpackItemTag;
+			TryEquipBackpack(RemovedBackpackItemTag, RollbackReplacedBackpackItemTag);
+			OutFailReason = EBGInventoryFailReason::ServerRejected;
+			return false;
+		}
+
+		OutFailReason = EBGInventoryFailReason::None;
+		return true;
+	}
+
+	if (EquipmentSlot == EBG_EquipmentSlot::Throwable)
+	{
+		if (!PublicState.ThrowableItemTag.IsValid())
+		{
+			LOGE(TEXT("%s: TryDropEquipment failed because throwable slot is empty."), *GetNameSafe(this));
+			OutFailReason = EBGInventoryFailReason::InvalidItem;
+			return false;
+		}
+
+		UBG_InventoryComponent* InventoryComponent = GetInventoryComponentForEquipment(TEXT("TryDropEquipment"));
+		if (!InventoryComponent)
+		{
+			OutFailReason = EBGInventoryFailReason::ServerRejected;
+			return false;
+		}
+
+		return InventoryComponent->TryDropItem(
+			EBG_ItemType::Throwable,
+			PublicState.ThrowableItemTag,
+			1,
+			OutFailReason);
+	}
+
+	LOGE(TEXT("%s: TryDropEquipment failed because slot %s is not droppable."),
+	     *GetNameSafe(this),
+	     *GetEquipmentSlotName(EquipmentSlot));
+	OutFailReason = EBGInventoryFailReason::SlotMismatch;
+	return false;
+}
+
 FGameplayTag UBG_EquipmentComponent::GetEquippedItemTag(EBG_EquipmentSlot Slot) const
 {
 	switch (Slot)
@@ -472,6 +603,24 @@ bool UBG_EquipmentComponent::HasEquippedItem(EBG_EquipmentSlot Slot) const
 FGameplayTag UBG_EquipmentComponent::GetActiveWeaponItemTag() const
 {
 	return GetEquippedItemTag(PublicState.ActiveWeaponSlot);
+}
+
+EBG_EquipmentSlot UBG_EquipmentComponent::GetSlotForEquippedWeaponTag(FGameplayTag WeaponItemTag) const
+{
+	if (!WeaponItemTag.IsValid())
+	{
+		return EBG_EquipmentSlot::None;
+	}
+
+	for (const EBG_EquipmentSlot Slot : {EBG_EquipmentSlot::PrimaryA, EBG_EquipmentSlot::PrimaryB, EBG_EquipmentSlot::Pistol, EBG_EquipmentSlot::Melee})
+	{
+		if (GetEquippedItemTag(Slot) == WeaponItemTag)
+		{
+			return Slot;
+		}
+	}
+
+	return EBG_EquipmentSlot::None;
 }
 
 int32 UBG_EquipmentComponent::GetLoadedAmmo(EBG_EquipmentSlot WeaponSlot) const
@@ -606,6 +755,15 @@ bool UBG_EquipmentComponent::CanMutateEquipmentState(const TCHAR* OperationName)
 	}
 
 	return true;
+}
+
+void UBG_EquipmentComponent::Server_RequestDropEquipment_Implementation(EBG_EquipmentSlot EquipmentSlot)
+{
+	EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
+	if (!TryDropEquipment(EquipmentSlot, FailReason))
+	{
+		NotifyEquipmentFailure(FailReason, EquipmentSlot);
+	}
 }
 
 bool UBG_EquipmentComponent::IsWeaponSlot(EBG_EquipmentSlot Slot) const
@@ -827,6 +985,82 @@ void UBG_EquipmentComponent::ForceEquipmentNetUpdate() const
 	}
 }
 
+bool UBG_EquipmentComponent::SpawnDroppedEquipmentItem(
+	EBG_ItemType DroppedItemType,
+	const FGameplayTag& DroppedItemTag,
+	int32 DroppedLoadedAmmo) const
+{
+	ABG_WorldItemBase* SpawnedWorldItem = ABG_WorldItemBase::SpawnDroppedWorldItem(
+		GetWorld(),
+		BuildDropTransform(),
+		WorldItemClass,
+		DroppedItemType,
+		DroppedItemTag,
+		1,
+		DroppedLoadedAmmo);
+
+	if (!SpawnedWorldItem)
+	{
+		LOGE(TEXT("%s: SpawnDroppedEquipmentItem failed for %s %s."),
+		     *GetNameSafe(this),
+		     *GetItemTypeName(DroppedItemType),
+		     *DroppedItemTag.ToString());
+		return false;
+	}
+
+	return true;
+}
+
+FTransform UBG_EquipmentComponent::BuildDropTransform() const
+{
+	const AActor* Owner = GetOwner();
+	if (!IsValid(Owner))
+	{
+		LOGE(TEXT("%s: BuildDropTransform failed because owner was null."), *GetNameSafe(this));
+		return FTransform::Identity;
+	}
+
+	const FVector DropLocation = Owner->GetActorLocation()
+		+ Owner->GetActorForwardVector() * 120.f
+		+ FVector(0.f, 0.f, 30.f);
+	const FRotator DropRotation(0.f, Owner->GetActorRotation().Yaw, 0.f);
+	return FTransform(DropRotation, DropLocation);
+}
+
+void UBG_EquipmentComponent::NotifyEquipmentFailure(
+	EBGInventoryFailReason FailReason,
+	EBG_EquipmentSlot EquipmentSlot) const
+{
+	ABG_Character* OwnerCharacter = Cast<ABG_Character>(GetOwner());
+	if (!OwnerCharacter)
+	{
+		LOGE(TEXT("%s: NotifyEquipmentFailure failed because owner was not ABG_Character. FailReason=%d"),
+		     *GetNameSafe(this),
+		     static_cast<int32>(FailReason));
+		return;
+	}
+
+	EBG_ItemType FailureItemType = EBG_ItemType::None;
+	if (IsWeaponSlot(EquipmentSlot))
+	{
+		FailureItemType = EBG_ItemType::Weapon;
+	}
+	else if (IsArmorSlot(EquipmentSlot))
+	{
+		FailureItemType = EBG_ItemType::Armor;
+	}
+	else if (EquipmentSlot == EBG_EquipmentSlot::Backpack)
+	{
+		FailureItemType = EBG_ItemType::Backpack;
+	}
+	else if (EquipmentSlot == EBG_EquipmentSlot::Throwable)
+	{
+		FailureItemType = EBG_ItemType::Throwable;
+	}
+
+	OwnerCharacter->Client_ReceiveInventoryFailure(FailReason, FailureItemType, GetEquippedItemTag(EquipmentSlot));
+}
+
 void UBG_EquipmentComponent::ApplyActiveWeaponStateToCharacter()
 {
 	AActor* Owner = GetOwner();
@@ -891,4 +1125,10 @@ FString UBG_EquipmentComponent::GetEquipmentSlotName(EBG_EquipmentSlot Slot)
 {
 	const UEnum* SlotEnum = StaticEnum<EBG_EquipmentSlot>();
 	return SlotEnum ? SlotEnum->GetNameStringByValue(static_cast<int64>(Slot)) : TEXT("<Unknown>");
+}
+
+FString UBG_EquipmentComponent::GetItemTypeName(EBG_ItemType ItemType)
+{
+	const UEnum* ItemTypeEnum = StaticEnum<EBG_ItemType>();
+	return ItemTypeEnum ? ItemTypeEnum->GetNameStringByValue(static_cast<int64>(ItemType)) : TEXT("<Unknown>");
 }

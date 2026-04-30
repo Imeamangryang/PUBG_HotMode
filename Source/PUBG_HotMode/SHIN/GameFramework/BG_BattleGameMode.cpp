@@ -111,3 +111,17 @@ void ABG_BattleGameMode::SpawnAndPossessPlayer(APlayerController* NewPlayer)
 
 	BG_SHIN_LOG_CONTROLLER(this, NewPlayer, "After Possess");
 }
+
+void ABG_BattleGameMode::HandlePlayerDeath_Implementation(AController* VictimController, APawn* VictimPawn)
+{
+	if (!VictimController)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("HandlePlayerDeath failed because VictimController was null"));
+		return;
+	}
+
+	BG_SHIN_LOG_EVENT_BLOCK(this, "HandlePlayerDeath",
+		TEXT("VictimController=%s VictimPawn=%s"),
+		*BGLogHelper::SafeName(VictimController),
+		*BGLogHelper::SafeName(VictimPawn));
+}

@@ -4,7 +4,11 @@
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
+#include "GameplayTagContainer.h"
 #include "BG_HealthViewModel.h"
+#include "Inventory/BG_EquipmentComponent.h"
+#include "UI/BG_InventoryViewModel.h"
+#include "Inventory/BG_ItemTypes.h"
 #include "Player/BG_Character.h"
 #include "Blueprint/UserWidget.h"
 #include "PUBG_HotMode/ConstructionHelperExtension.h"
@@ -40,13 +44,17 @@ namespace
 			EnhancedInputComponent->BindAction(InputAction, ETriggerEvent::Triggered, Owner, Func);
 		}
 	}
+
+	const FName BandageItemTagName(TEXT("Item.Heal.Bandage"));
 }
 
 
 ABG_PlayerController::ABG_PlayerController()
 {
-	EXT_CREATE_DEFAULT_SUBOBJECT(HUDViewModel);
+	EXT_CREATE_DEFAULT_SUBOBJECT(HealthViewModel);
+	EXT_CREATE_DEFAULT_SUBOBJECT(InventoryViewModel);
 	Ext::SetClass(GameHUDWidgetClass, TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/GEONU/Blueprints/Widgets/WBP_GameHUD.WBP_GameHUD_C'"));
+	Ext::SetClass(InventoryWidgetClass, TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/GEONU/Blueprints/Widgets/WBP_InventoryHUD.WBP_InventoryHUD_C'"));
 }
 
 void ABG_PlayerController::BeginPlay()
@@ -118,19 +126,119 @@ void ABG_PlayerController::RefreshViewModelBinding()
 		return;
 	}
 
-	if (!HUDViewModel)
+	ABG_Character* BGCharacter = GetBGCharacter();
+
+	if (!HealthViewModel)
 	{
 		UE_LOG(LogTemp, Error, TEXT("%s: RefreshHUDViewModelBinding failed because HUDViewModel was null."), *GetNameSafe(this));
-		return;
 	}
-
-	if (ABG_Character* BGCharacter = GetBGCharacter())
+	else if (BGCharacter)
 	{
-		HUDViewModel->NotifyPossessedCharacterReady(BGCharacter);
+		HealthViewModel->NotifyPossessedCharacterReady(BGCharacter);
+	}
+	else
+	{
+		HealthViewModel->NotifyPossessedCharacterCleared();
+	}
+
+	if (!InventoryViewModel)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: RefreshViewModelBinding failed because InventoryViewModel was null."), *GetNameSafe(this));
+	}
+	else if (BGCharacter)
+	{
+		InventoryViewModel->NotifyPossessedCharacterReady(BGCharacter);
+	}
+	else
+	{
+		InventoryViewModel->NotifyPossessedCharacterCleared();
+	}
+}
+
+void ABG_PlayerController::NotifyInventoryFailure(
+	EBGInventoryFailReason FailReason,
+	EBG_ItemType ItemType,
+	FGameplayTag ItemTag)
+{
+	if (!IsLocalController())
+	{
 		return;
 	}
 
-	HUDViewModel->NotifyPossessedCharacterCleared();
+	if (!InventoryViewModel)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: NotifyInventoryFailure failed because InventoryViewModel was null."), *GetNameSafe(this));
+		return;
+	}
+
+	InventoryViewModel->NotifyInventoryFailure(FailReason, ItemType, ItemTag);
+}
+
+void ABG_PlayerController::OpenInventoryUI()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!EnsureInventoryWidget())
+	{
+		return;
+	}
+
+	if (InventoryViewModel)
+	{
+		InventoryViewModel->RefreshAllRenderData();
+		InventoryViewModel->ForceBroadcastAll();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: OpenInventoryUI could not refresh because InventoryViewModel was null."), *GetNameSafe(this));
+	}
+
+	InventoryWidget->SetVisibility(ESlateVisibility::Visible);
+
+	FInputModeGameAndUI InputMode;
+	InputMode.SetWidgetToFocus(InventoryWidget->TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	InputMode.SetHideCursorDuringCapture(false);
+	SetInputMode(InputMode);
+	bShowMouseCursor = true;
+}
+
+void ABG_PlayerController::CloseInventoryUI()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!InventoryWidget)
+	{
+		return;
+	}
+
+	InventoryWidget->SetVisibility(ESlateVisibility::Collapsed);
+
+	FInputModeGameOnly InputMode;
+	SetInputMode(InputMode);
+	bShowMouseCursor = false;
+}
+
+void ABG_PlayerController::ToggleInventoryUI()
+{
+	if (IsInventoryUIOpen())
+	{
+		CloseInventoryUI();
+		return;
+	}
+
+	OpenInventoryUI();
+}
+
+bool ABG_PlayerController::IsInventoryUIOpen() const
+{
+	return InventoryWidget && InventoryWidget->IsInViewport() && InventoryWidget->IsVisible();
 }
 
 void ABG_PlayerController::EnsureGameHUDWidget()
@@ -166,6 +274,47 @@ void ABG_PlayerController::EnsureGameHUDWidget()
 	{
 		UE_LOG(LogTemp, Error, TEXT("%s: EnsureGameHUDWidget failed to add GameHUDWidget to player screen."), *GetNameSafe(this));
 	}
+}
+
+bool ABG_PlayerController::EnsureInventoryWidget()
+{
+	if (!IsLocalController())
+	{
+		return false;
+	}
+
+	if (InventoryWidget)
+	{
+		if (!InventoryWidget->IsInViewport() && !InventoryWidget->AddToPlayerScreen(50))
+		{
+			UE_LOG(LogTemp, Error, TEXT("%s: EnsureInventoryWidget failed to add existing InventoryWidget to player screen."), *GetNameSafe(this));
+			return false;
+		}
+
+		return true;
+	}
+
+	if (!InventoryWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: EnsureInventoryWidget failed because InventoryWidgetClass was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	InventoryWidget = CreateWidget<UUserWidget>(this, InventoryWidgetClass);
+	if (!InventoryWidget)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: EnsureInventoryWidget failed because CreateWidget returned null."), *GetNameSafe(this));
+		return false;
+	}
+
+	InventoryWidget->SetVisibility(ESlateVisibility::Collapsed);
+	if (!InventoryWidget->AddToPlayerScreen(50))
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: EnsureInventoryWidget failed to add InventoryWidget to player screen."), *GetNameSafe(this));
+		return false;
+	}
+
+	return true;
 }
 
 void ABG_PlayerController::RefreshMappingContext()
@@ -250,12 +399,15 @@ void ABG_PlayerController::BindPawnInput()
 
 	BindStartedIfValid(EnhancedInputComponent, InputConfig.AimAction.Get(), this, &ABG_PlayerController::OnAimInputStarted);
 	BindCompletedIfValid(EnhancedInputComponent, InputConfig.AimAction.Get(), this, &ABG_PlayerController::OnAimInputCompleted);
+	BindStartedIfValid(EnhancedInputComponent, InputConfig.ReloadAction.Get(), this, &ABG_PlayerController::OnReloadInputStarted);
 
 	// 상호작용 키
 	BindStartedIfValid(EnhancedInputComponent, InputConfig.InteractAction.Get(), this, &ABG_PlayerController::OnInteractInputStarted);
+	BindStartedIfValid(EnhancedInputComponent, InputConfig.InventoryAction.Get(), this, &ABG_PlayerController::OnInventoryInputStarted);
 	
 	InputComponent->BindKey(EKeys::One, IE_Pressed, this, &ABG_PlayerController::OnEquipPistolInputStarted);
 	InputComponent->BindKey(EKeys::Two, IE_Pressed, this, &ABG_PlayerController::OnEquipRifleInputStarted);
+	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &ABG_PlayerController::OnUseBandageInputStarted);
 	InputComponent->BindKey(EKeys::Zero, IE_Pressed, this, &ABG_PlayerController::OnUnequipWeaponInputStarted);
 
 	LastBoundCharacter = BGCharacter;
@@ -356,6 +508,32 @@ void ABG_PlayerController::OnUnequipWeaponInputStarted()
 	UE_LOG(LogTemp, Error, TEXT("%s: OnUnequipWeaponInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
+void ABG_PlayerController::OnUseBandageInputStarted()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!InventoryViewModel)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: OnUseBandageInputStarted failed because InventoryViewModel was null."), *GetNameSafe(this));
+		return;
+	}
+
+	const FGameplayTag BandageItemTag = FGameplayTag::RequestGameplayTag(BandageItemTagName, false);
+	if (!BandageItemTag.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: OnUseBandageInputStarted failed because gameplay tag %s was not registered."),
+		       *GetNameSafe(this),
+		       *BandageItemTagName.ToString());
+		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, EBG_ItemType::Heal, BandageItemTag);
+		return;
+	}
+
+	InventoryViewModel->RequestUseInventoryItem(EBG_ItemType::Heal, BandageItemTag);
+}
+
 void ABG_PlayerController::OnCrouchInputStarted()
 {
 	if (ABG_Character* BGCharacter = GetBGCharacter())
@@ -444,6 +622,17 @@ void ABG_PlayerController::OnAimInputCompleted()
 	UE_LOG(LogTemp, Error, TEXT("%s: OnAimInputCompleted failed because controlled character was null."), *GetNameSafe(this));
 }
 
+void ABG_PlayerController::OnReloadInputStarted()
+{
+	if (ABG_Character* BGCharacter = GetBGCharacter())
+	{
+		BGCharacter->ReloadFromInput();
+		return;
+	}
+
+	UE_LOG(LogTemp, Error, TEXT("%s: OnReloadInputStarted failed because controlled character was null."), *GetNameSafe(this));
+}
+
 void ABG_PlayerController::OnInteractInputStarted()
 {
 	if (ABG_Character* BGChar = GetBGCharacter())
@@ -455,8 +644,63 @@ void ABG_PlayerController::OnInteractInputStarted()
 	UE_LOG(LogTemp, Error, TEXT("%s: OnInteractInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
+void ABG_PlayerController::OnInventoryInputStarted()
+{
+	ToggleInventoryUI();
+}
+
 
 ABG_Character* ABG_PlayerController::GetBGCharacter() const
 {
 	return Cast<ABG_Character>(GetPawn());
+}
+
+void ABG_PlayerController::HandleControlledCharacterDeath(ABG_Character* DeadCharacter)
+{
+	if (!DeadCharacter)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: HandleControlledCharacterDeath failed because DeadCharacter was null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (GetPawn() != DeadCharacter)
+	{
+		return;
+	}
+
+	SetIgnoreMoveInput(true);
+	SetIgnoreLookInput(true);
+	CloseInventoryUI();
+
+	if (HasAuthority())
+	{
+		StartSpectatingOnly();
+	}
+
+	PrepareSpectatorMode(DeadCharacter);
+}
+
+void ABG_PlayerController::HandleControlledCharacterRevived(ABG_Character* RevivedCharacter)
+{
+	if (!RevivedCharacter)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: HandleControlledCharacterRevived failed because RevivedCharacter was null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (GetPawn() != RevivedCharacter)
+	{
+		return;
+	}
+
+	ResetIgnoreMoveInput();
+	ResetIgnoreLookInput();
+}
+
+void ABG_PlayerController::PrepareSpectatorMode_Implementation(ABG_Character* DeadCharacter)
+{
+	if (!DeadCharacter)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: PrepareSpectatorMode failed because DeadCharacter was null."), *GetNameSafe(this));
+	}
 }

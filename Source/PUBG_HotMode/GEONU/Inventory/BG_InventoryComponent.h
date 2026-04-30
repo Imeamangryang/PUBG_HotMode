@@ -9,6 +9,7 @@
 #include "BG_InventoryComponent.generated.h"
 
 struct FBG_ItemDataRow;
+class ABG_WorldItemBase;
 class UBG_ItemDataRegistrySubsystem;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBGInventoryChanged);
@@ -53,6 +54,15 @@ public: // --- Inventory Mutation ---
 	// Server item remove
 	UFUNCTION(BlueprintCallable, Category="Inventory")
 	bool TryRemoveItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity, int32& OutRemovedQuantity);
+
+	// Client/server drop request
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	void RequestDropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
+
+	// Server item drop
+	UFUNCTION(BlueprintCallable, Category="Inventory")
+	bool TryDropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity,
+	                 EBGInventoryFailReason& OutFailReason);
 
 	// Backpack capacity bonus update
 	UFUNCTION(BlueprintCallable, Category="Inventory")
@@ -111,6 +121,9 @@ private: // --- Validation ---
 	// Server mutation guard
 	bool CanMutateInventoryState(const TCHAR* OperationName) const;
 
+	UFUNCTION(Server, Reliable)
+	void Server_RequestDropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
+
 	// Regular inventory type guard
 	bool IsRegularInventoryItemType(EBG_ItemType ItemType) const;
 
@@ -132,6 +145,13 @@ private: // --- Weight Calculation ---
 	// Current weight recalculation
 	void RecalculateCurrentWeight();
 
+	// Drop spawn transform
+	FTransform BuildDropTransform() const;
+
+	// Owning client failure notification
+	void NotifyInventoryFailure(EBGInventoryFailReason FailReason, EBG_ItemType ItemType,
+	                            const FGameplayTag& ItemTag) const;
+
 private: // --- Broadcast ---
 	// Inventory delegate broadcast
 	void BroadcastInventoryChanged();
@@ -146,6 +166,11 @@ private: // --- Data ---
 	// Owner-only stack list
 	UPROPERTY(Replicated)
 	FBG_InventoryList InventoryList;
+
+	// Generic world item actor class used by drop flows
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Inventory|World Item",
+		meta=(AllowPrivateAccess="true"))
+	TSubclassOf<ABG_WorldItemBase> WorldItemClass;
 
 	// Owner-only current weight
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_CurrentWeight, Category="Inventory",

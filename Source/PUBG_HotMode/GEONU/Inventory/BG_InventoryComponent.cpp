@@ -4,10 +4,12 @@
 
 #include "BG_ItemDataRegistrySubsystem.h"
 #include "BG_ItemDataRow.h"
+#include "BG_WorldItemBase.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
+#include "Player/BG_Character.h"
 #include "PUBG_HotMode/PUBG_HotMode.h"
 
 
@@ -16,6 +18,7 @@ UBG_InventoryComponent::UBG_InventoryComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
 	InventoryList.SetOwnerComponent(this);
+	WorldItemClass = ABG_WorldItemBase::StaticClass();
 }
 
 void UBG_InventoryComponent::OnRegister()
@@ -174,6 +177,116 @@ bool UBG_InventoryComponent::TryRemoveItem(EBG_ItemType ItemType, FGameplayTag I
 	return OutRemovedQuantity > 0;
 }
 
+void UBG_InventoryComponent::RequestDropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity)
+{
+	const AActor* Owner = GetOwner();
+	if (Owner && Owner->HasAuthority())
+	{
+		EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
+		if (!TryDropItem(ItemType, ItemTag, Quantity, FailReason))
+		{
+			NotifyInventoryFailure(FailReason, ItemType, ItemTag);
+		}
+		return;
+	}
+
+	Server_RequestDropItem(ItemType, ItemTag, Quantity);
+}
+
+bool UBG_InventoryComponent::TryDropItem(
+	EBG_ItemType ItemType,
+	FGameplayTag ItemTag,
+	int32 Quantity,
+	EBGInventoryFailReason& OutFailReason)
+{
+	OutFailReason = EBGInventoryFailReason::ServerRejected;
+
+	if (!CanMutateInventoryState(TEXT("TryDropItem")))
+	{
+		return false;
+	}
+
+	if (Quantity <= 0)
+	{
+		LOGE(TEXT("%s: TryDropItem failed because quantity %d was not positive."), *GetNameSafe(this), Quantity);
+		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
+		return false;
+	}
+
+	if (!IsRegularInventoryItemType(ItemType))
+	{
+		LOGE(TEXT("%s: TryDropItem failed because item type %s is not stored in regular inventory."),
+		     *GetNameSafe(this),
+		     *GetItemTypeName(ItemType));
+		OutFailReason = EBGInventoryFailReason::InvalidItem;
+		return false;
+	}
+
+	if (!ItemTag.IsValid())
+	{
+		LOGE(TEXT("%s: TryDropItem failed because ItemTag was invalid for item type %s."),
+		     *GetNameSafe(this),
+		     *GetItemTypeName(ItemType));
+		OutFailReason = EBGInventoryFailReason::InvalidItem;
+		return false;
+	}
+
+	if (!FindInventoryItemRow(ItemType, ItemTag, TEXT("TryDropItem")))
+	{
+		OutFailReason = EBGInventoryFailReason::InvalidItem;
+		return false;
+	}
+
+	const int32 CurrentQuantity = GetQuantity(ItemType, ItemTag);
+	if (CurrentQuantity < Quantity)
+	{
+		LOGE(TEXT("%s: TryDropItem failed because requested quantity %d exceeds owned quantity %d for %s %s."),
+		     *GetNameSafe(this),
+		     Quantity,
+		     CurrentQuantity,
+		     *GetItemTypeName(ItemType),
+		     *ItemTag.ToString());
+		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
+		return false;
+	}
+
+	int32 RemovedQuantity = 0;
+	if (!TryRemoveItem(ItemType, ItemTag, Quantity, RemovedQuantity) || RemovedQuantity != Quantity)
+	{
+		LOGE(TEXT("%s: TryDropItem failed because TryRemoveItem removed %d of %d for %s %s."),
+		     *GetNameSafe(this),
+		     RemovedQuantity,
+		     Quantity,
+		     *GetItemTypeName(ItemType),
+		     *ItemTag.ToString());
+		OutFailReason = EBGInventoryFailReason::ServerRejected;
+		return false;
+	}
+
+	ABG_WorldItemBase* SpawnedWorldItem = ABG_WorldItemBase::SpawnDroppedWorldItem(
+		GetWorld(),
+		BuildDropTransform(),
+		WorldItemClass,
+		ItemType,
+		ItemTag,
+		RemovedQuantity);
+	if (!SpawnedWorldItem)
+	{
+		int32 RollbackAddedQuantity = 0;
+		TryAddItem(ItemType, ItemTag, RemovedQuantity, RollbackAddedQuantity);
+		LOGE(TEXT("%s: TryDropItem failed because world item spawn failed for %s %s. RollbackAdded=%d."),
+		     *GetNameSafe(this),
+		     *GetItemTypeName(ItemType),
+		     *ItemTag.ToString(),
+		     RollbackAddedQuantity);
+		OutFailReason = EBGInventoryFailReason::ServerRejected;
+		return false;
+	}
+
+	OutFailReason = EBGInventoryFailReason::None;
+	return true;
+}
+
 bool UBG_InventoryComponent::CanAddItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity,
                                         int32& OutAcceptedQuantity) const
 {
@@ -230,6 +343,18 @@ bool UBG_InventoryComponent::CanAddItem(EBG_ItemType ItemType, FGameplayTag Item
 	}
 
 	return true;
+}
+
+void UBG_InventoryComponent::Server_RequestDropItem_Implementation(
+	EBG_ItemType ItemType,
+	FGameplayTag ItemTag,
+	int32 Quantity)
+{
+	EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
+	if (!TryDropItem(ItemType, ItemTag, Quantity, FailReason))
+	{
+		NotifyInventoryFailure(FailReason, ItemType, ItemTag);
+	}
 }
 
 int32 UBG_InventoryComponent::GetQuantity(EBG_ItemType ItemType, FGameplayTag ItemTag) const
@@ -404,6 +529,39 @@ void UBG_InventoryComponent::RecalculateCurrentWeight()
 	}
 
 	CurrentWeight = FMath::Max(0.f, NewCurrentWeight);
+}
+
+FTransform UBG_InventoryComponent::BuildDropTransform() const
+{
+	const AActor* Owner = GetOwner();
+	if (!IsValid(Owner))
+	{
+		LOGE(TEXT("%s: BuildDropTransform failed because owner was null."), *GetNameSafe(this));
+		return FTransform::Identity;
+	}
+
+	const FVector DropLocation = Owner->GetActorLocation()
+		+ Owner->GetActorForwardVector() * 120.f
+		+ FVector(0.f, 0.f, 30.f);
+	const FRotator DropRotation(0.f, Owner->GetActorRotation().Yaw, 0.f);
+	return FTransform(DropRotation, DropLocation);
+}
+
+void UBG_InventoryComponent::NotifyInventoryFailure(
+	EBGInventoryFailReason FailReason,
+	EBG_ItemType ItemType,
+	const FGameplayTag& ItemTag) const
+{
+	ABG_Character* OwnerCharacter = Cast<ABG_Character>(GetOwner());
+	if (!OwnerCharacter)
+	{
+		LOGE(TEXT("%s: NotifyInventoryFailure failed because owner was not ABG_Character. FailReason=%d"),
+		     *GetNameSafe(this),
+		     static_cast<int32>(FailReason));
+		return;
+	}
+
+	OwnerCharacter->Client_ReceiveInventoryFailure(FailReason, ItemType, ItemTag);
 }
 
 void UBG_InventoryComponent::BroadcastInventoryChanged()
