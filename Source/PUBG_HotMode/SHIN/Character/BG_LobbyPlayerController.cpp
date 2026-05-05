@@ -1,6 +1,7 @@
 ﻿#include "BG_LobbyPlayerController.h"
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/BG_LobbyGameMode.h"
+#include "GameFramework/BG_GameInstance.h"
 #include "Utils/BG_LogHelper.h"
 
 ABG_LobbyPlayerController::ABG_LobbyPlayerController()
@@ -89,5 +90,27 @@ void ABG_LobbyPlayerController::Server_RequestStartGame_Implementation()
 	else
 	{
 		BG_SHIN_LOG_ERROR(TEXT("GetAuthGameMode<ABG_LobbyGameMode>() returned null"));
+	}
+}
+
+void ABG_LobbyPlayerController::Client_ShowLoadingScreen_Implementation()
+{
+	BG_SHIN_LOG_EVENT_BLOCK(this, "Client_ShowLoadingScreen",
+		TEXT("Showing loading screen on client"));
+
+	if (LobbyWidgetInstance)
+	{
+		LobbyWidgetInstance->RemoveFromParent();
+		LobbyWidgetInstance = nullptr;
+		BG_SHIN_LOG_INFO(TEXT("Lobby widget removed before showing loading screen"));
+	}
+
+	if (UBG_GameInstance* GI = GetGameInstance<UBG_GameInstance>())
+	{
+		GI->StartLoadingScreen();
+	}
+	else
+	{
+		BG_SHIN_LOG_ERROR(TEXT("GetGameInstance<UBG_GameInstance>() returned null"));
 	}
 }

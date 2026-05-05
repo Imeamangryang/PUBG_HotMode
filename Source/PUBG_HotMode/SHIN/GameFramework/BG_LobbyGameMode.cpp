@@ -116,9 +116,30 @@ void ABG_LobbyGameMode::NotifyStartRequested()
 	}
 
 	BG_SHIN_LOG_EVENT_BLOCK(this, "LobbyGameMode NotifyStartRequested",
-		TEXT("Scheduling DoServerTravel timer"));
+		TEXT("Broadcasting loading screen and scheduling DoServerTravel timer"));
 
 	bStartRequested = true;
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("NotifyStartRequested failed because World was null"));
+		bStartRequested = false;
+		return;
+	}
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		if (ABG_LobbyPlayerController* LobbyPC = Cast<ABG_LobbyPlayerController>(It->Get()))
+		{
+			BG_SHIN_LOG_INFO(TEXT("Calling Client_ShowLoadingScreen on %s"), *LobbyPC->GetName());
+			LobbyPC->Client_ShowLoadingScreen();
+		}
+		else
+		{
+			BG_SHIN_LOG_WARN(TEXT("PlayerController is not ABG_LobbyPlayerController"));
+		}
+	}
 
 	FTimerHandle TimerHandle;
 

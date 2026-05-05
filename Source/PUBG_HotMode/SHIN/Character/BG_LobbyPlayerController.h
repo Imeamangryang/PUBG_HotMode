@@ -22,6 +22,9 @@ public:
 	UFUNCTION(Server, Reliable)
 	void Server_RequestStartGame();
 
+	UFUNCTION(Client, Reliable)
+	void Client_ShowLoadingScreen();
+
 	UFUNCTION(BlueprintCallable, Category = "BG|Lobby")
 	void ShowLobbyUI();
 
