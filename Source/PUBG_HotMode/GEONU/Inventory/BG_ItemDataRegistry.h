@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "Combat/BG_WeaponFireTypes.h"
 #include "BG_ItemDataRow.h"
 #include "BG_ItemDataRegistry.generated.h"
 
@@ -28,6 +29,10 @@ public: // --- Table Access ---
 	UFUNCTION(BlueprintPure, Category="Item Data")
 	UDataTable* GetDataTableForType(EBG_ItemType ItemType) const;
 
+	/// Return weapon fire spec table
+	UFUNCTION(BlueprintPure, Category="Item Data|Weapon Fire")
+	UDataTable* GetWeaponFireSpecTable() const;
+
 public: // --- Item Data Queries ---
 	/// Check row by GameplayTag
 	UFUNCTION(BlueprintCallable, Category="Item Data")
@@ -42,6 +47,15 @@ public: // --- Item Data Queries ---
 		EBG_ItemType ItemType, const FGameplayTag& ItemTag,
 		FString* OutFailureReason = nullptr) const;
 
+	/// Check weapon fire spec row by GameplayTag
+	UFUNCTION(BlueprintCallable, Category="Item Data|Weapon Fire")
+	bool HasValidWeaponFireSpecRow(FGameplayTag WeaponItemTag) const;
+
+	/// Find validated weapon fire spec row
+	const FBG_WeaponFireSpecRow* FindWeaponFireSpecRow(
+		const FGameplayTag& WeaponItemTag,
+		FString* OutFailureReason = nullptr) const;
+
 	/// Find validated typed row
 	template <typename RowType>
 	const RowType* FindTypedItemRow(
@@ -52,9 +66,7 @@ public: // --- Item Data Queries ---
 
 		// 아래 cast는 선택된 table이 요청한 Row 계열을 담고 있음이 확인된 뒤에만 안전
 		if (!ValidateTypedRowStruct(ItemType, RowType::StaticStruct(), OutFailureReason))
-		{
 			return nullptr;
-		}
 
 		const FBG_ItemDataRow* ItemRow = FindItemRow(ItemType, ItemTag, OutFailureReason);
 		return ItemRow ? static_cast<const RowType*>(ItemRow) : nullptr;
@@ -64,6 +76,10 @@ public: // --- Validation ---
 	/// Validate all registry content
 	UFUNCTION(BlueprintCallable, Category="Item Data")
 	bool ValidateRegistry() const;
+
+	/// Validate weapon fire spec rows when a fire spec table is assigned
+	UFUNCTION(BlueprintCallable, Category="Item Data|Weapon Fire")
+	bool ValidateWeaponFireSpecs() const;
 
 public: // --- Data Tables ---
 	/// Ammo: stack size, carry weight, reload cost
@@ -85,6 +101,10 @@ public: // --- Data Tables ---
 	/// Weapon: equipment slot and ammo compatibility
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Item Data")
 	TObjectPtr<UDataTable> WeaponItems;
+
+	/// Weapon fire specs: fire mode, damage, cooldown, projectile and throw policy
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Item Data|Weapon Fire")
+	TObjectPtr<UDataTable> WeaponFireSpecs;
 
 	/// Armor: durability and damage reduction contracts
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Item Data")
@@ -112,4 +132,17 @@ private: // --- Internal Helpers ---
 	bool ValidateItemRowData(
 		EBG_ItemType ExpectedItemType, FName RowName, const FBG_ItemDataRow& ItemRow,
 		FString* OutFailureReason = nullptr) const;
+
+	/// Validate fire spec table assignment and row struct
+	bool ValidateWeaponFireSpecTable(
+		UDataTable*& OutFireSpecTable,
+		FString* OutFailureReason = nullptr) const;
+
+	/// Validate fire spec row invariants
+	bool ValidateWeaponFireSpecRowData(
+		FName RowName, const FBG_WeaponFireSpecRow& FireSpecRow,
+		FString* OutFailureReason = nullptr) const;
+
+	/// Validate each weapon item row has a matching fire spec row
+	bool ValidateWeaponRowsHaveFireSpecs(FString* OutFailureReason = nullptr) const;
 };

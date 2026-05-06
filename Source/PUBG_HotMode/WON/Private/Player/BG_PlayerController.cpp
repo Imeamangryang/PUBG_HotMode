@@ -5,7 +5,7 @@
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
 #include "GameplayTagContainer.h"
-#include "BG_HealthViewModel.h"
+#include "UI/BG_HealthViewModel.h"
 #include "Inventory/BG_EquipmentComponent.h"
 #include "UI/BG_InventoryViewModel.h"
 #include "Inventory/BG_ItemTypes.h"
@@ -79,6 +79,8 @@ void ABG_PlayerController::BeginPlay()
 
 		BG_SHIN_LOG_INFO(TEXT("Applied GameOnly input mode on local controller"));
 	}
+	
+	ShowBattleWaitingTimeUI();
 }
 
 void ABG_PlayerController::OnPossess(APawn* InPawn)
@@ -416,7 +418,6 @@ void ABG_PlayerController::BindPawnInput()
 
 void ABG_PlayerController::OnMoveInputTriggered(const FInputActionValue& Value)
 {
-	BG_SHIN_LOG_INFO(TEXT("OnMoveInputTriggered"));
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
 		BGCharacter->MoveFromInput(Value);
@@ -703,4 +704,63 @@ void ABG_PlayerController::PrepareSpectatorMode_Implementation(ABG_Character* De
 	{
 		UE_LOG(LogTemp, Error, TEXT("%s: PrepareSpectatorMode failed because DeadCharacter was null."), *GetNameSafe(this));
 	}
+}
+
+void ABG_PlayerController::ShowBattleWaitingTimeUI()
+{
+	if (!IsLocalController())
+	{
+		BG_SHIN_LOG_WARN(TEXT("ShowBattleWaitingTimeUI skipped because controller is not local"));
+		return;
+	}
+
+	if (BattleWaitingTimeWidget)
+	{
+		BG_SHIN_LOG_WARN(TEXT("ShowBattleWaitingTimeUI skipped because widget already exists"));
+		return;
+	}
+
+	if (!BattleWaitingTimeWidgetClass)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("BattleWaitingTimeWidgetClass is not set"));
+		return;
+	}
+
+	BattleWaitingTimeWidget = CreateWidget<UUserWidget>(this, BattleWaitingTimeWidgetClass);
+	if (!BattleWaitingTimeWidget)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("CreateWidget failed for BattleWaitingTimeWidgetClass=%s"),
+			*BGLogHelper::SafeClass(BattleWaitingTimeWidgetClass));
+		return;
+	}
+
+	if (!BattleWaitingTimeWidget->AddToPlayerScreen(100))
+	{
+		BG_SHIN_LOG_ERROR(TEXT("Failed to add BattleWaitingTimeWidget to player screen"));
+		BattleWaitingTimeWidget = nullptr;
+		return;
+	}
+
+	BG_SHIN_LOG_INFO(TEXT("BattleWaitingTime widget added to player screen"));
+}
+
+void ABG_PlayerController::HideBattleWaitingTimeUI()
+{
+	if (!BattleWaitingTimeWidget)
+	{
+		BG_SHIN_LOG_WARN(TEXT("HideBattleWaitingTimeUI skipped because widget does not exist"));
+		return;
+	}
+
+	BattleWaitingTimeWidget->RemoveFromParent();
+	BattleWaitingTimeWidget = nullptr;
+
+	BG_SHIN_LOG_INFO(TEXT("BattleWaitingTime widget removed from player screen"));
+}
+void ABG_PlayerController::Client_HideBattleWaitingTimeUI_Implementation()
+{
+	BG_SHIN_LOG_EVENT_BLOCK(this, "Client_HideBattleWaitingTimeUI",
+		TEXT("Removing battle waiting time UI"));
+
+	HideBattleWaitingTimeUI();
 }

@@ -13,6 +13,7 @@ class ABG_WorldItemBase;
 class USpringArmComponent;
 class UCameraComponent;
 class USkeletalMeshComponent;
+class UCameraShakeBase;
 class UBG_DamageSystem;
 class UBG_EquipmentComponent;
 class UBG_HealthComponent;
@@ -115,6 +116,13 @@ public:
 	void StopAimFromInput();
 	void ToggleCrouchFromInput();
 	void ToggleProneFromInput();
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetProneState(bool bNewIsProne);
+
+	UFUNCTION(Client, Unreliable)
+	void Client_ApplyRecoil(float PitchDelta, float YawDelta, TSubclassOf<UCameraShakeBase> CameraShakeClass, float CameraShakeScale);
+
 	void StartLeanLeftFromInput();
 	void StopLeanLeftFromInput();
 	void StartLeanRightFromInput();
@@ -313,6 +321,7 @@ private:
 	void UpdateDerivedState();
 	void UpdateActionAvailability();
 	void UpdateCharacterStance();
+	void ApplyMovementSpeedForStance();
 	void ClearTimedCharacterState();
 	bool CanStartAim() const;
 	void RefreshCurrentInteractableWeapon();
@@ -367,6 +376,15 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
 	float InteractionRangeRadius = 180.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float StandingWalkSpeed = 600.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float CrouchWalkSpeed = 300.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float ProneWalkSpeed = 150.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
 	FName WeaponInteractableCollisionProfileName = TEXT("Weapon");

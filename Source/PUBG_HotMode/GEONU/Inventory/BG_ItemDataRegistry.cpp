@@ -72,6 +72,11 @@ UDataTable* UBG_ItemDataRegistry::GetDataTableForType(EBG_ItemType ItemType) con
 	}
 }
 
+UDataTable* UBG_ItemDataRegistry::GetWeaponFireSpecTable() const
+{
+	return WeaponFireSpecs.Get();
+}
+
 // --- Item Data Queries ---
 
 bool UBG_ItemDataRegistry::HasValidItemRow(EBG_ItemType ItemType, FGameplayTag ItemTag) const
@@ -112,9 +117,7 @@ const FBG_ItemDataRow* UBG_ItemDataRegistry::FindItemRow(
 {
 	UDataTable* ItemTable = nullptr;
 	if (!ValidateTableForType(ItemType, ItemTable, OutFailureReason))
-	{
 		return nullptr;
-	}
 
 	if (!ItemTag.IsValid())
 	{
@@ -144,11 +147,51 @@ const FBG_ItemDataRow* UBG_ItemDataRegistry::FindItemRow(
 	// DataTable은 파생 Row struct의 바이트를 보관하므로, 위의 table 검증이 base view의 안전 조건
 	const FBG_ItemDataRow* ItemRow = reinterpret_cast<const FBG_ItemDataRow*>(RowData);
 	if (!ValidateItemRowData(ItemType, RowName, *ItemRow, OutFailureReason))
+		return nullptr;
+
+	return ItemRow;
+}
+
+bool UBG_ItemDataRegistry::HasValidWeaponFireSpecRow(FGameplayTag WeaponItemTag) const
+{
+	return FindWeaponFireSpecRow(WeaponItemTag) != nullptr;
+}
+
+const FBG_WeaponFireSpecRow* UBG_ItemDataRegistry::FindWeaponFireSpecRow(
+	const FGameplayTag& WeaponItemTag,
+	FString* OutFailureReason) const
+{
+	UDataTable* FireSpecTable = nullptr;
+	if (!ValidateWeaponFireSpecTable(FireSpecTable, OutFailureReason))
+		return nullptr;
+
+	if (!WeaponItemTag.IsValid())
 	{
+		SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("%s received an invalid weapon item tag for fire spec lookup."),
+			                *GetNameSafe(this)));
 		return nullptr;
 	}
 
-	return ItemRow;
+	const FName RowName = WeaponItemTag.GetTagName();
+	const uint8* RowData = FireSpecTable->FindRowUnchecked(RowName);
+	if (!RowData)
+	{
+		SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("%s is missing weapon fire spec row %s in table %s."),
+			                *GetNameSafe(this),
+			                *RowName.ToString(),
+			                *GetNameSafe(FireSpecTable)));
+		return nullptr;
+	}
+
+	const FBG_WeaponFireSpecRow* FireSpecRow = reinterpret_cast<const FBG_WeaponFireSpecRow*>(RowData);
+	if (!ValidateWeaponFireSpecRowData(RowName, *FireSpecRow, OutFailureReason))
+		return nullptr;
+
+	return FireSpecRow;
 }
 
 // --- Validation ---
@@ -197,6 +240,48 @@ bool UBG_ItemDataRegistry::ValidateRegistry() const
 				bIsValid = false;
 			}
 		}
+	}
+
+	if (WeaponFireSpecs)
+	{
+		bIsValid = ValidateWeaponFireSpecs() && bIsValid;
+	}
+
+	return bIsValid;
+}
+
+bool UBG_ItemDataRegistry::ValidateWeaponFireSpecs() const
+{
+	UDataTable* FireSpecTable = nullptr;
+	if (!ValidateWeaponFireSpecTable(FireSpecTable))
+		return false;
+
+	bool bIsValid = true;
+	for (const TPair<FName, uint8*>& RowPair : FireSpecTable->GetRowMap())
+	{
+		if (!RowPair.Value)
+		{
+			SetRegistryFailure(
+				nullptr,
+				FString::Printf(TEXT("%s contains a null weapon fire spec row pointer for row %s in table %s."),
+				                *GetNameSafe(this),
+				                *RowPair.Key.ToString(),
+				                *GetNameSafe(FireSpecTable)));
+			bIsValid = false;
+			continue;
+		}
+
+		const FBG_WeaponFireSpecRow* FireSpecRow =
+			reinterpret_cast<const FBG_WeaponFireSpecRow*>(RowPair.Value);
+		if (!ValidateWeaponFireSpecRowData(RowPair.Key, *FireSpecRow))
+		{
+			bIsValid = false;
+		}
+	}
+
+	if (!ValidateWeaponRowsHaveFireSpecs())
+	{
+		bIsValid = false;
 	}
 
 	return bIsValid;
@@ -293,9 +378,7 @@ bool UBG_ItemDataRegistry::ValidateTypedRowStruct(
 
 	UDataTable* ItemTable = nullptr;
 	if (!ValidateTableForType(ItemType, ItemTable, OutFailureReason))
-	{
 		return false;
-	}
 
 	const UScriptStruct* ActualRowStruct = ItemTable->GetRowStruct();
 	if (!ActualRowStruct || !ActualRowStruct->IsChildOf(RequestedRowStruct))
@@ -344,5 +427,196 @@ bool UBG_ItemDataRegistry::ValidateItemRowData(
 			                *ItemRow.ItemTag.ToString()));
 	}
 
+	if (ExpectedItemType == EBG_ItemType::Weapon)
+	{
+		const FBG_WeaponItemDataRow& WeaponRow = static_cast<const FBG_WeaponItemDataRow&>(ItemRow);
+		if (WeaponRow.EquippedWeaponClass.IsNull())
+		{
+			return SetRegistryFailure(
+				OutFailureReason,
+				FString::Printf(TEXT("Weapon item row %s has no EquippedWeaponClass assigned."),
+				                *RowName.ToString()));
+		}
+	}
+
 	return true;
+}
+
+bool UBG_ItemDataRegistry::ValidateWeaponFireSpecTable(
+	UDataTable*& OutFireSpecTable,
+	FString* OutFailureReason) const
+{
+	OutFireSpecTable = nullptr;
+
+	UDataTable* FireSpecTable = GetWeaponFireSpecTable();
+	if (!FireSpecTable)
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("%s has no WeaponFireSpecs DataTable assigned."),
+			                *GetNameSafe(this)));
+	}
+
+	const UScriptStruct* ActualRowStruct = FireSpecTable->GetRowStruct();
+	if (!ActualRowStruct)
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("Weapon fire spec DataTable %s has no row struct."),
+			                *GetNameSafe(FireSpecTable)));
+	}
+
+	const UScriptStruct* ExpectedRowStruct = FBG_WeaponFireSpecRow::StaticStruct();
+	if (!ActualRowStruct->IsChildOf(ExpectedRowStruct))
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("Weapon fire spec DataTable %s uses row struct %s, expected %s."),
+			                *GetNameSafe(FireSpecTable),
+			                *GetNameSafe(ActualRowStruct),
+			                *GetNameSafe(ExpectedRowStruct)));
+	}
+
+	OutFireSpecTable = FireSpecTable;
+	return true;
+}
+
+bool UBG_ItemDataRegistry::ValidateWeaponFireSpecRowData(
+	FName RowName, const FBG_WeaponFireSpecRow& FireSpecRow,
+	FString* OutFailureReason) const
+{
+	if (!FireSpecRow.WeaponItemTag.IsValid())
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("Weapon fire spec row %s has an invalid WeaponItemTag."),
+			                *RowName.ToString()));
+	}
+
+	if (RowName != FireSpecRow.WeaponItemTag.GetTagName())
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("Weapon fire spec row %s has WeaponItemTag %s; RowName and WeaponItemTag must match."),
+			                *RowName.ToString(),
+			                *FireSpecRow.WeaponItemTag.ToString()));
+	}
+
+	if (FireSpecRow.FireMode == EBG_WeaponFireMode::None)
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("Weapon fire spec row %s has FireMode None."),
+			                *RowName.ToString()));
+	}
+
+	if (FireSpecRow.FireImplementation == EBG_WeaponFireImplementation::None)
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("Weapon fire spec row %s has FireImplementation None."),
+			                *RowName.ToString()));
+	}
+
+	if (FireSpecRow.Damage < 0.f || FireSpecRow.Range < 0.f || FireSpecRow.FireCooldown < 0.f)
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("Weapon fire spec row %s has negative damage, range, or cooldown."),
+			                *RowName.ToString()));
+	}
+
+	if (FireSpecRow.AmmoCost < 0 || FireSpecRow.PelletCount < 1 || FireSpecRow.SpreadAngleDegrees < 0.f)
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("Weapon fire spec row %s has invalid ammo cost, pellet count, or spread."),
+			                *RowName.ToString()));
+	}
+
+	if (FireSpecRow.FireMode == EBG_WeaponFireMode::Melee && FireSpecRow.AmmoCost != 0)
+	{
+		return SetRegistryFailure(
+			OutFailureReason,
+			FString::Printf(TEXT("Weapon fire spec row %s is melee but AmmoCost is %d."),
+			                *RowName.ToString(),
+			                FireSpecRow.AmmoCost));
+	}
+
+	if (FireSpecRow.bCanThrow)
+	{
+		if (FireSpecRow.ThrowMaxDistance <= 0.f)
+		{
+			return SetRegistryFailure(
+				OutFailureReason,
+				FString::Printf(TEXT("Weapon fire spec row %s can throw but ThrowMaxDistance is not positive."),
+				                *RowName.ToString()));
+		}
+
+		if (FireSpecRow.ThrowDamageMax < FireSpecRow.ThrowDamageMin)
+		{
+			return SetRegistryFailure(
+				OutFailureReason,
+				FString::Printf(TEXT("Weapon fire spec row %s has ThrowDamageMax lower than ThrowDamageMin."),
+				                *RowName.ToString()));
+		}
+
+		if (FireSpecRow.ThrowDamageFalloffStartDistance < 0.f
+			|| FireSpecRow.ThrowDamageFalloffStartDistance > FireSpecRow.ThrowMaxDistance)
+		{
+			return SetRegistryFailure(
+				OutFailureReason,
+				FString::Printf(TEXT("Weapon fire spec row %s has invalid ThrowDamageFalloffStartDistance."),
+				                *RowName.ToString()));
+		}
+	}
+
+	return true;
+}
+
+bool UBG_ItemDataRegistry::ValidateWeaponRowsHaveFireSpecs(FString* OutFailureReason) const
+{
+	UDataTable* WeaponTable = nullptr;
+	if (!ValidateTableForType(EBG_ItemType::Weapon, WeaponTable, OutFailureReason))
+		return false;
+
+	UDataTable* FireSpecTable = nullptr;
+	if (!ValidateWeaponFireSpecTable(FireSpecTable, OutFailureReason))
+		return false;
+
+	bool bIsValid = true;
+	for (const TPair<FName, uint8*>& RowPair : WeaponTable->GetRowMap())
+	{
+		if (!RowPair.Value)
+		{
+			SetRegistryFailure(
+				OutFailureReason,
+				FString::Printf(TEXT("%s contains a null weapon item row pointer for row %s in table %s."),
+				                *GetNameSafe(this),
+				                *RowPair.Key.ToString(),
+				                *GetNameSafe(WeaponTable)));
+			bIsValid = false;
+			continue;
+		}
+
+		const FBG_ItemDataRow* ItemRow = reinterpret_cast<const FBG_ItemDataRow*>(RowPair.Value);
+		if (!ValidateItemRowData(EBG_ItemType::Weapon, RowPair.Key, *ItemRow, OutFailureReason))
+		{
+			bIsValid = false;
+			continue;
+		}
+
+		const FName FireSpecRowName = ItemRow->ItemTag.GetTagName();
+		if (!FireSpecTable->FindRowUnchecked(FireSpecRowName))
+		{
+			SetRegistryFailure(
+				OutFailureReason,
+				FString::Printf(TEXT("Weapon item row %s has no matching weapon fire spec row in table %s."),
+				                *FireSpecRowName.ToString(),
+				                *GetNameSafe(FireSpecTable)));
+			bIsValid = false;
+		}
+	}
+
+	return bIsValid;
 }

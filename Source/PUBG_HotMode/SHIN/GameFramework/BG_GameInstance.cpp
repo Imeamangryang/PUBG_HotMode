@@ -2,6 +2,8 @@
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Utils/BG_LogHelper.h"
 
 void UBG_GameInstance::Init()
@@ -117,6 +119,20 @@ void UBG_GameInstance::HideLoadingScreen()
 	BG_SHIN_LOG_INFO(TEXT("Loading screen hidden"));
 }
 
+FString UBG_GameInstance::ResolveServerAddress() const
+{
+	FString CommandLineAddress;
+	if (FParse::Value(FCommandLine::Get(), TEXT("BGServerAddress="), CommandLineAddress))
+	{
+		if (!CommandLineAddress.IsEmpty())
+		{
+			return CommandLineAddress;
+		}
+	}
+
+	return DefaultServerAddress;
+}
+
 void UBG_GameInstance::ConnectToDedicatedServer()
 {
 	UWorld* World = GetWorld();
@@ -135,8 +151,7 @@ void UBG_GameInstance::ConnectToDedicatedServer()
 		return;
 	}
 
-	// const FString ServerAddress = TEXT("172.16.30.118:7777");
-	const FString ServerAddress = TEXT("127.0.0.1:7777");
+	const FString ServerAddress = ResolveServerAddress();
 	BG_SHIN_LOG_INFO(TEXT("ServerAddress = %s"), *ServerAddress);
 
 	ShowLoadingScreen();

@@ -6,6 +6,8 @@
 #include "BG_ItemDataRegistrySubsystem.h"
 #include "BG_ItemDataRow.h"
 #include "BG_WorldItemBase.h"
+#include "Combat/BG_EquippedWeaponBase.h"
+#include "Components/SceneComponent.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -46,22 +48,20 @@ void UBG_EquipmentComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 
 	DOREPLIFETIME(UBG_EquipmentComponent, PublicState);
 	DOREPLIFETIME_CONDITION(UBG_EquipmentComponent, OwnerState, COND_OwnerOnly);
+	DOREPLIFETIME(UBG_EquipmentComponent, EquippedWeaponActors);
 }
 
 UBG_EquipmentComponent* UBG_EquipmentComponent::FindEquipmentComponent(AActor* TargetActor)
 {
-	if (!IsValid(TargetActor))
-	{
-		LOGE(TEXT("FindEquipmentComponent failed because target actor was null or invalid."));
+	if (!ensureMsgf(IsValid(TargetActor),
+	                TEXT("FindEquipmentComponent failed because target actor was null or invalid.")))
 		return nullptr;
-	}
 
 	UBG_EquipmentComponent* EquipmentComponent = TargetActor->FindComponentByClass<UBG_EquipmentComponent>();
-	if (!EquipmentComponent)
-	{
-		LOGE(TEXT("FindEquipmentComponent failed because %s has no equipment component."), *GetNameSafe(TargetActor));
+	if (!ensureMsgf(EquipmentComponent,
+	                TEXT("FindEquipmentComponent failed because %s has no equipment component."),
+	                *GetNameSafe(TargetActor)))
 		return nullptr;
-	}
 
 	return EquipmentComponent;
 }
@@ -74,38 +74,32 @@ bool UBG_EquipmentComponent::TryEquipWeapon(EBG_EquipmentSlot WeaponSlot, FGamep
 	OutReplacedLoadedAmmo = 0;
 
 	if (!CanMutateEquipmentState(TEXT("TryEquipWeapon")))
-	{
 		return false;
-	}
 
-	if (!IsWeaponSlot(WeaponSlot))
-	{
-		LOGE(TEXT("%s: TryEquipWeapon failed because %s is not a weapon slot."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(WeaponSlot));
+	if (!ensureMsgf(IsWeaponSlot(WeaponSlot), TEXT("%s: TryEquipWeapon failed because %s is not a weapon slot."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(WeaponSlot)))
 		return false;
-	}
 
 	const FBG_WeaponItemDataRow* WeaponRow = FindWeaponItemRow(WeaponItemTag, TEXT("TryEquipWeapon"));
 	if (!WeaponRow)
-	{
 		return false;
-	}
 
-	if (!IsWeaponSlotCompatible(WeaponSlot, *WeaponRow))
-	{
-		LOGE(TEXT("%s: TryEquipWeapon failed because weapon %s is not compatible with slot %s."),
-		     *GetNameSafe(this),
-		     *WeaponItemTag.ToString(),
-		     *GetEquipmentSlotName(WeaponSlot));
+	if (!ensureMsgf(IsWeaponSlotCompatible(WeaponSlot, *WeaponRow),
+	                TEXT("%s: TryEquipWeapon failed because weapon %s is not compatible with slot %s."),
+	                *GetNameSafe(this), *WeaponItemTag.ToString(), *GetEquipmentSlotName(WeaponSlot)))
 		return false;
-	}
+
+	ABG_EquippedWeaponBase* NewWeaponActor = nullptr;
+	if (!SpawnAndAttachEquippedWeaponActor(WeaponSlot, *WeaponRow, NewWeaponActor))
+		return false;
 
 	OutReplacedWeaponItemTag = GetEquippedItemTag(WeaponSlot);
 	OutReplacedLoadedAmmo = GetLoadedAmmo(WeaponSlot);
+	ABG_EquippedWeaponBase* ReplacedWeaponActor = GetEquippedWeaponActor(WeaponSlot);
 
 	SetEquippedItemTag(WeaponSlot, WeaponItemTag);
 	SetLoadedAmmo(WeaponSlot, FMath::Clamp(LoadedAmmo, 0, FMath::Max(0, WeaponRow->MagazineSize)));
+	SetEquippedWeaponActor(WeaponSlot, NewWeaponActor);
 
 	if (PublicState.ActiveWeaponSlot == EBG_EquipmentSlot::None || !GetActiveWeaponItemTag().IsValid())
 	{
@@ -113,6 +107,8 @@ bool UBG_EquipmentComponent::TryEquipWeapon(EBG_EquipmentSlot WeaponSlot, FGamep
 	}
 
 	NormalizeActiveWeaponSlot();
+	RefreshEquippedWeaponAttachments();
+	DestroyEquippedWeaponActorInstance(ReplacedWeaponActor);
 	ApplyActiveWeaponStateToCharacter();
 	BroadcastEquipmentChanged();
 	BroadcastActiveWeaponSlotChanged();
@@ -128,31 +124,23 @@ bool UBG_EquipmentComponent::TryUnequipWeapon(EBG_EquipmentSlot WeaponSlot,
 	OutRemovedLoadedAmmo = 0;
 
 	if (!CanMutateEquipmentState(TEXT("TryUnequipWeapon")))
-	{
 		return false;
-	}
 
-	if (!IsWeaponSlot(WeaponSlot))
-	{
-		LOGE(TEXT("%s: TryUnequipWeapon failed because %s is not a weapon slot."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(WeaponSlot));
+	if (!ensureMsgf(IsWeaponSlot(WeaponSlot), TEXT("%s: TryUnequipWeapon failed because %s is not a weapon slot."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(WeaponSlot)))
 		return false;
-	}
 
-	if (!HasEquippedItem(WeaponSlot))
-	{
-		LOGE(TEXT("%s: TryUnequipWeapon failed because slot %s is empty."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(WeaponSlot));
+	if (!ensureMsgf(HasEquippedItem(WeaponSlot), TEXT("%s: TryUnequipWeapon failed because slot %s is empty."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(WeaponSlot)))
 		return false;
-	}
 
 	OutRemovedWeaponItemTag = GetEquippedItemTag(WeaponSlot);
 	OutRemovedLoadedAmmo = GetLoadedAmmo(WeaponSlot);
+	ABG_EquippedWeaponBase* RemovedWeaponActor = GetEquippedWeaponActor(WeaponSlot);
 
 	SetEquippedItemTag(WeaponSlot, FGameplayTag());
 	SetLoadedAmmo(WeaponSlot, 0);
+	SetEquippedWeaponActor(WeaponSlot, nullptr);
 
 	if (PublicState.ActiveWeaponSlot == WeaponSlot)
 	{
@@ -160,6 +148,8 @@ bool UBG_EquipmentComponent::TryUnequipWeapon(EBG_EquipmentSlot WeaponSlot,
 	}
 
 	NormalizeActiveWeaponSlot();
+	RefreshEquippedWeaponAttachments();
+	DestroyEquippedWeaponActorInstance(RemovedWeaponActor);
 	ApplyActiveWeaponStateToCharacter();
 	BroadcastEquipmentChanged();
 	BroadcastActiveWeaponSlotChanged();
@@ -170,28 +160,21 @@ bool UBG_EquipmentComponent::TryUnequipWeapon(EBG_EquipmentSlot WeaponSlot,
 bool UBG_EquipmentComponent::TryActivateWeapon(EBG_EquipmentSlot WeaponSlot)
 {
 	if (!CanMutateEquipmentState(TEXT("TryActivateWeapon")))
-	{
 		return false;
-	}
 
-	if (WeaponSlot != EBG_EquipmentSlot::None && !IsWeaponSlot(WeaponSlot))
-	{
-		LOGE(TEXT("%s: TryActivateWeapon failed because %s is not a weapon slot."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(WeaponSlot));
+	if (!ensureMsgf(WeaponSlot == EBG_EquipmentSlot::None || IsWeaponSlot(WeaponSlot),
+	                TEXT("%s: TryActivateWeapon failed because %s is not a weapon slot."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(WeaponSlot)))
 		return false;
-	}
 
-	if (WeaponSlot != EBG_EquipmentSlot::None && !HasEquippedItem(WeaponSlot))
-	{
-		LOGE(TEXT("%s: TryActivateWeapon failed because slot %s is empty."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(WeaponSlot));
+	if (!ensureMsgf(WeaponSlot == EBG_EquipmentSlot::None || HasEquippedItem(WeaponSlot),
+	                TEXT("%s: TryActivateWeapon failed because slot %s is empty."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(WeaponSlot)))
 		return false;
-	}
 
 	PublicState.ActiveWeaponSlot = WeaponSlot;
 	NormalizeActiveWeaponSlot();
+	RefreshEquippedWeaponAttachments();
 	ApplyActiveWeaponStateToCharacter();
 	BroadcastActiveWeaponSlotChanged();
 	BroadcastEquipmentChanged();
@@ -202,32 +185,20 @@ bool UBG_EquipmentComponent::TryActivateWeapon(EBG_EquipmentSlot WeaponSlot)
 bool UBG_EquipmentComponent::TryLoadAmmo(EBG_EquipmentSlot WeaponSlot, int32 LoadedAmmo)
 {
 	if (!CanMutateEquipmentState(TEXT("TryLoadAmmo")))
-	{
 		return false;
-	}
 
-	if (!IsWeaponSlot(WeaponSlot))
-	{
-		LOGE(TEXT("%s: TryLoadAmmo failed because %s is not a weapon slot."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(WeaponSlot));
+	if (!ensureMsgf(IsWeaponSlot(WeaponSlot), TEXT("%s: TryLoadAmmo failed because %s is not a weapon slot."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(WeaponSlot)))
 		return false;
-	}
 
 	const FGameplayTag WeaponItemTag = GetEquippedItemTag(WeaponSlot);
-	if (!WeaponItemTag.IsValid())
-	{
-		LOGE(TEXT("%s: TryLoadAmmo failed because slot %s is empty."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(WeaponSlot));
+	if (!ensureMsgf(WeaponItemTag.IsValid(), TEXT("%s: TryLoadAmmo failed because slot %s is empty."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(WeaponSlot)))
 		return false;
-	}
 
 	const FBG_WeaponItemDataRow* WeaponRow = FindWeaponItemRow(WeaponItemTag, TEXT("TryLoadAmmo"));
 	if (!WeaponRow)
-	{
 		return false;
-	}
 
 	SetLoadedAmmo(WeaponSlot, FMath::Clamp(LoadedAmmo, 0, FMath::Max(0, WeaponRow->MagazineSize)));
 	BroadcastEquipmentChanged();
@@ -243,32 +214,20 @@ bool UBG_EquipmentComponent::TryEquipArmor(EBG_EquipmentSlot ArmorSlot, FGamepla
 	OutReplacedArmorDurability = 0.f;
 
 	if (!CanMutateEquipmentState(TEXT("TryEquipArmor")))
-	{
 		return false;
-	}
 
-	if (!IsArmorSlot(ArmorSlot))
-	{
-		LOGE(TEXT("%s: TryEquipArmor failed because %s is not an armor slot."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(ArmorSlot));
+	if (!ensureMsgf(IsArmorSlot(ArmorSlot), TEXT("%s: TryEquipArmor failed because %s is not an armor slot."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(ArmorSlot)))
 		return false;
-	}
 
 	const FBG_ArmorItemDataRow* ArmorRow = FindArmorItemRow(ArmorItemTag, TEXT("TryEquipArmor"));
 	if (!ArmorRow)
-	{
 		return false;
-	}
 
-	if (!IsArmorSlotCompatible(ArmorSlot, *ArmorRow))
-	{
-		LOGE(TEXT("%s: TryEquipArmor failed because armor %s is not compatible with slot %s."),
-		     *GetNameSafe(this),
-		     *ArmorItemTag.ToString(),
-		     *GetEquipmentSlotName(ArmorSlot));
+	if (!ensureMsgf(IsArmorSlotCompatible(ArmorSlot, *ArmorRow),
+	                TEXT("%s: TryEquipArmor failed because armor %s is not compatible with slot %s."),
+	                *GetNameSafe(this), *ArmorItemTag.ToString(), *GetEquipmentSlotName(ArmorSlot)))
 		return false;
-	}
 
 	OutReplacedArmorItemTag = GetEquippedItemTag(ArmorSlot);
 	OutReplacedArmorDurability = GetArmorDurability(ArmorSlot);
@@ -288,25 +247,15 @@ bool UBG_EquipmentComponent::TryUnequipArmor(EBG_EquipmentSlot ArmorSlot,
 	OutRemovedArmorDurability = 0.f;
 
 	if (!CanMutateEquipmentState(TEXT("TryUnequipArmor")))
-	{
 		return false;
-	}
 
-	if (!IsArmorSlot(ArmorSlot))
-	{
-		LOGE(TEXT("%s: TryUnequipArmor failed because %s is not an armor slot."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(ArmorSlot));
+	if (!ensureMsgf(IsArmorSlot(ArmorSlot), TEXT("%s: TryUnequipArmor failed because %s is not an armor slot."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(ArmorSlot)))
 		return false;
-	}
 
-	if (!HasEquippedItem(ArmorSlot))
-	{
-		LOGE(TEXT("%s: TryUnequipArmor failed because slot %s is empty."),
-		     *GetNameSafe(this),
-		     *GetEquipmentSlotName(ArmorSlot));
+	if (!ensureMsgf(HasEquippedItem(ArmorSlot), TEXT("%s: TryUnequipArmor failed because slot %s is empty."),
+	                *GetNameSafe(this), *GetEquipmentSlotName(ArmorSlot)))
 		return false;
-	}
 
 	OutRemovedArmorItemTag = GetEquippedItemTag(ArmorSlot);
 	OutRemovedArmorDurability = GetArmorDurability(ArmorSlot);
@@ -324,23 +273,18 @@ bool UBG_EquipmentComponent::TryEquipBackpack(FGameplayTag BackpackItemTag,
 	OutReplacedBackpackItemTag = FGameplayTag();
 
 	if (!CanMutateEquipmentState(TEXT("TryEquipBackpack")))
-	{
 		return false;
-	}
 
 	const FBG_BackpackItemDataRow* BackpackRow = FindBackpackItemRow(BackpackItemTag, TEXT("TryEquipBackpack"));
 	if (!BackpackRow)
-	{
 		return false;
-	}
 
 	UBG_InventoryComponent* InventoryComponent = GetInventoryComponentForEquipment(TEXT("TryEquipBackpack"));
 	if (!InventoryComponent)
-	{
 		return false;
-	}
 
-	if (!InventoryComponent->SetBackpackWeightBonus(BackpackRow->WeightBonus))
+	bool bSuccess = InventoryComponent->SetBackpackWeightBonus(BackpackRow->WeightBonus);
+	if (!bSuccess)
 	{
 		LOGW(TEXT("%s: TryEquipBackpack rejected backpack %s because inventory weight limit update failed."),
 		     *GetNameSafe(this),
@@ -360,23 +304,18 @@ bool UBG_EquipmentComponent::TryUnequipBackpack(FGameplayTag& OutRemovedBackpack
 	OutRemovedBackpackItemTag = FGameplayTag();
 
 	if (!CanMutateEquipmentState(TEXT("TryUnequipBackpack")))
-	{
 		return false;
-	}
 
-	if (!PublicState.BackpackItemTag.IsValid())
-	{
-		LOGE(TEXT("%s: TryUnequipBackpack failed because backpack slot is empty."), *GetNameSafe(this));
+	if (!ensureMsgf(PublicState.BackpackItemTag.IsValid(),
+	                TEXT("%s: TryUnequipBackpack failed because backpack slot is empty."), *GetNameSafe(this)))
 		return false;
-	}
 
 	UBG_InventoryComponent* InventoryComponent = GetInventoryComponentForEquipment(TEXT("TryUnequipBackpack"));
 	if (!InventoryComponent)
-	{
 		return false;
-	}
 
-	if (!InventoryComponent->SetBackpackWeightBonus(0.f))
+	bool bSuccess = InventoryComponent->SetBackpackWeightBonus(0.f);
+	if (!bSuccess)
 	{
 		LOGW(TEXT("%s: TryUnequipBackpack rejected because current inventory weight exceeds base capacity."),
 		     *GetNameSafe(this));
@@ -393,29 +332,19 @@ bool UBG_EquipmentComponent::TryUnequipBackpack(FGameplayTag& OutRemovedBackpack
 bool UBG_EquipmentComponent::TrySetThrowable(FGameplayTag ThrowableItemTag)
 {
 	if (!CanMutateEquipmentState(TEXT("TrySetThrowable")))
-	{
 		return false;
-	}
 
 	if (!FindThrowableItemRow(ThrowableItemTag, TEXT("TrySetThrowable")))
-	{
 		return false;
-	}
 
 	UBG_InventoryComponent* InventoryComponent = GetInventoryComponentForEquipment(TEXT("TrySetThrowable"));
 	if (!InventoryComponent)
-	{
 		return false;
-	}
 
 	const int32 ThrowableQuantity = InventoryComponent->GetQuantity(EBG_ItemType::Throwable, ThrowableItemTag);
-	if (ThrowableQuantity <= 0)
-	{
-		LOGE(TEXT("%s: TrySetThrowable failed because inventory has no throwable %s."),
-		     *GetNameSafe(this),
-		     *ThrowableItemTag.ToString());
+	if (!ensureMsgf(ThrowableQuantity > 0, TEXT("%s: TrySetThrowable failed because inventory has no throwable %s."),
+	                *GetNameSafe(this), *ThrowableItemTag.ToString()))
 		return false;
-	}
 
 	PublicState.ThrowableItemTag = ThrowableItemTag;
 	BroadcastEquipmentChanged();
@@ -426,14 +355,10 @@ bool UBG_EquipmentComponent::TrySetThrowable(FGameplayTag ThrowableItemTag)
 bool UBG_EquipmentComponent::TryClearThrowable()
 {
 	if (!CanMutateEquipmentState(TEXT("TryClearThrowable")))
-	{
 		return false;
-	}
 
 	if (!PublicState.ThrowableItemTag.IsValid())
-	{
 		return true;
-	}
 
 	PublicState.ThrowableItemTag = FGameplayTag();
 	BroadcastEquipmentChanged();
@@ -464,9 +389,7 @@ bool UBG_EquipmentComponent::TryDropEquipment(
 	OutFailReason = EBGInventoryFailReason::ServerRejected;
 
 	if (!CanMutateEquipmentState(TEXT("TryDropEquipment")))
-	{
 		return false;
-	}
 
 	if (IsWeaponSlot(EquipmentSlot))
 	{
@@ -542,9 +465,9 @@ bool UBG_EquipmentComponent::TryDropEquipment(
 
 	if (EquipmentSlot == EBG_EquipmentSlot::Throwable)
 	{
-		if (!PublicState.ThrowableItemTag.IsValid())
+		if (!ensureMsgf(PublicState.ThrowableItemTag.IsValid(),
+		                TEXT("%s: TryDropEquipment failed because throwable slot is empty."), *GetNameSafe(this)))
 		{
-			LOGE(TEXT("%s: TryDropEquipment failed because throwable slot is empty."), *GetNameSafe(this));
 			OutFailReason = EBGInventoryFailReason::InvalidItem;
 			return false;
 		}
@@ -563,9 +486,8 @@ bool UBG_EquipmentComponent::TryDropEquipment(
 			OutFailReason);
 	}
 
-	LOGE(TEXT("%s: TryDropEquipment failed because slot %s is not droppable."),
-	     *GetNameSafe(this),
-	     *GetEquipmentSlotName(EquipmentSlot));
+	ensureMsgf(false, TEXT("%s: TryDropEquipment failed because slot %s is not droppable."),
+	           *GetNameSafe(this), *GetEquipmentSlotName(EquipmentSlot));
 	OutFailReason = EBGInventoryFailReason::SlotMismatch;
 	return false;
 }
@@ -612,7 +534,10 @@ EBG_EquipmentSlot UBG_EquipmentComponent::GetSlotForEquippedWeaponTag(FGameplayT
 		return EBG_EquipmentSlot::None;
 	}
 
-	for (const EBG_EquipmentSlot Slot : {EBG_EquipmentSlot::PrimaryA, EBG_EquipmentSlot::PrimaryB, EBG_EquipmentSlot::Pistol, EBG_EquipmentSlot::Melee})
+	for (const EBG_EquipmentSlot Slot : {
+		     EBG_EquipmentSlot::PrimaryA, EBG_EquipmentSlot::PrimaryB, EBG_EquipmentSlot::Pistol,
+		     EBG_EquipmentSlot::Melee
+	     })
 	{
 		if (GetEquippedItemTag(Slot) == WeaponItemTag)
 		{
@@ -640,6 +565,28 @@ int32 UBG_EquipmentComponent::GetLoadedAmmo(EBG_EquipmentSlot WeaponSlot) const
 	}
 }
 
+ABG_EquippedWeaponBase* UBG_EquipmentComponent::GetEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot) const
+{
+	switch (WeaponSlot)
+	{
+	case EBG_EquipmentSlot::PrimaryA:
+		return EquippedWeaponActors.PrimaryAWeaponActor;
+	case EBG_EquipmentSlot::PrimaryB:
+		return EquippedWeaponActors.PrimaryBWeaponActor;
+	case EBG_EquipmentSlot::Pistol:
+		return EquippedWeaponActors.PistolWeaponActor;
+	case EBG_EquipmentSlot::Melee:
+		return EquippedWeaponActors.MeleeWeaponActor;
+	default:
+		return nullptr;
+	}
+}
+
+ABG_EquippedWeaponBase* UBG_EquipmentComponent::GetActiveEquippedWeaponActor() const
+{
+	return GetEquippedWeaponActor(PublicState.ActiveWeaponSlot);
+}
+
 float UBG_EquipmentComponent::GetArmorDurability(EBG_EquipmentSlot ArmorSlot) const
 {
 	switch (ArmorSlot)
@@ -655,6 +602,7 @@ float UBG_EquipmentComponent::GetArmorDurability(EBG_EquipmentSlot ArmorSlot) co
 
 void UBG_EquipmentComponent::OnRep_PublicState()
 {
+	RefreshEquippedWeaponAttachments();
 	BroadcastEquipmentChanged();
 	BroadcastActiveWeaponSlotChanged();
 }
@@ -664,19 +612,21 @@ void UBG_EquipmentComponent::OnRep_OwnerState()
 	BroadcastEquipmentChanged();
 }
 
+void UBG_EquipmentComponent::OnRep_EquippedWeaponActors()
+{
+	RefreshEquippedWeaponAttachments();
+	BroadcastEquipmentChanged();
+}
+
 void UBG_EquipmentComponent::HandleInventoryItemQuantityChanged(
 	EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity)
 {
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
-	{
 		return;
-	}
 
 	if (ItemType != EBG_ItemType::Throwable || Quantity > 0 || PublicState.ThrowableItemTag != ItemTag)
-	{
 		return;
-	}
 
 	PublicState.ThrowableItemTag = FGameplayTag();
 	BroadcastEquipmentChanged();
@@ -686,27 +636,17 @@ void UBG_EquipmentComponent::HandleInventoryItemQuantityChanged(
 void UBG_EquipmentComponent::CacheOwnerComponents()
 {
 	AActor* Owner = GetOwner();
-	if (!IsValid(Owner))
-	{
-		LOGE(TEXT("%s: CacheOwnerComponents failed because owner was null."), *GetNameSafe(this));
+	if (!ensureMsgf(IsValid(Owner), TEXT("%s: CacheOwnerComponents failed because owner was null."),
+	                *GetNameSafe(this)))
 		return;
-	}
 
 	CachedCharacter = Cast<ABG_Character>(Owner);
-	if (!CachedCharacter)
-	{
-		LOGE(TEXT("%s: CacheOwnerComponents failed because owner %s was not ABG_Character."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(Owner));
-	}
+	ensureMsgf(CachedCharacter, TEXT("%s: CacheOwnerComponents failed because owner %s was not ABG_Character."),
+	           *GetNameSafe(this), *GetNameSafe(Owner));
 
 	CachedInventory = Owner->FindComponentByClass<UBG_InventoryComponent>();
-	if (!CachedInventory)
-	{
-		LOGE(TEXT("%s: CacheOwnerComponents failed because owner %s had no inventory component."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(Owner));
-	}
+	ensureMsgf(CachedInventory, TEXT("%s: CacheOwnerComponents failed because owner %s had no inventory component."),
+	           *GetNameSafe(this), *GetNameSafe(Owner));
 }
 
 UBG_InventoryComponent* UBG_EquipmentComponent::GetInventoryComponentForEquipment(const TCHAR* OperationName) const
@@ -717,21 +657,13 @@ UBG_InventoryComponent* UBG_EquipmentComponent::GetInventoryComponentForEquipmen
 	}
 
 	const AActor* Owner = GetOwner();
-	if (!IsValid(Owner))
-	{
-		LOGE(TEXT("%s: %s failed because owner was null."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(IsValid(Owner), TEXT("%s: %s failed because owner was null."), *GetNameSafe(this), OperationName))
 		return nullptr;
-	}
 
 	UBG_InventoryComponent* InventoryComponent = Owner->FindComponentByClass<UBG_InventoryComponent>();
-	if (!InventoryComponent)
-	{
-		LOGE(TEXT("%s: %s failed because owner %s had no inventory component."),
-		     *GetNameSafe(this),
-		     OperationName,
-		     *GetNameSafe(Owner));
+	if (!ensureMsgf(InventoryComponent, TEXT("%s: %s failed because owner %s had no inventory component."),
+	                *GetNameSafe(this), OperationName, *GetNameSafe(Owner)))
 		return nullptr;
-	}
 
 	return InventoryComponent;
 }
@@ -739,20 +671,12 @@ UBG_InventoryComponent* UBG_EquipmentComponent::GetInventoryComponentForEquipmen
 bool UBG_EquipmentComponent::CanMutateEquipmentState(const TCHAR* OperationName) const
 {
 	const AActor* Owner = GetOwner();
-	if (!IsValid(Owner))
-	{
-		LOGE(TEXT("%s: %s failed because owner was null."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(IsValid(Owner), TEXT("%s: %s failed because owner was null."), *GetNameSafe(this), OperationName))
 		return false;
-	}
 
-	if (!Owner->HasAuthority())
-	{
-		LOGE(TEXT("%s: %s failed because owner %s had no authority."),
-		     *GetNameSafe(this),
-		     OperationName,
-		     *GetNameSafe(Owner));
+	if (!ensureMsgf(Owner->HasAuthority(), TEXT("%s: %s failed because owner %s had no authority."),
+	                *GetNameSafe(this), OperationName, *GetNameSafe(Owner)))
 		return false;
-	}
 
 	return true;
 }
@@ -813,27 +737,18 @@ UBG_ItemDataRegistrySubsystem* UBG_EquipmentComponent::GetItemDataRegistrySubsys
 	const TCHAR* OperationName) const
 {
 	const UWorld* World = GetWorld();
-	if (!World)
-	{
-		LOGE(TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(World, TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName))
 		return nullptr;
-	}
 
 	UGameInstance* GameInstance = World->GetGameInstance();
-	if (!GameInstance)
-	{
-		LOGE(TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(GameInstance, TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this),
+	                OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GameInstance->GetSubsystem<UBG_ItemDataRegistrySubsystem>();
-	if (!RegistrySubsystem)
-	{
-		LOGE(TEXT("%s: %s failed because UBG_ItemDataRegistrySubsystem was null."),
-		     *GetNameSafe(this),
-		     OperationName);
+	if (!ensureMsgf(RegistrySubsystem, TEXT("%s: %s failed because UBG_ItemDataRegistrySubsystem was null."),
+	                *GetNameSafe(this), OperationName))
 		return nullptr;
-	}
 
 	return RegistrySubsystem;
 }
@@ -841,61 +756,53 @@ UBG_ItemDataRegistrySubsystem* UBG_EquipmentComponent::GetItemDataRegistrySubsys
 const FBG_WeaponItemDataRow* UBG_EquipmentComponent::FindWeaponItemRow(
 	const FGameplayTag& ItemTag, const TCHAR* OperationName) const
 {
-	if (!ItemTag.IsValid())
-	{
-		LOGE(TEXT("%s: %s failed because weapon ItemTag was invalid."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(ItemTag.IsValid(), TEXT("%s: %s failed because weapon ItemTag was invalid."), *GetNameSafe(this),
+	                OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GetItemDataRegistrySubsystem(OperationName);
 	return RegistrySubsystem
-		? RegistrySubsystem->FindTypedItemRow<FBG_WeaponItemDataRow>(EBG_ItemType::Weapon, ItemTag)
-		: nullptr;
+		       ? RegistrySubsystem->FindTypedItemRow<FBG_WeaponItemDataRow>(EBG_ItemType::Weapon, ItemTag)
+		       : nullptr;
 }
 
 const FBG_ArmorItemDataRow* UBG_EquipmentComponent::FindArmorItemRow(
 	const FGameplayTag& ItemTag, const TCHAR* OperationName) const
 {
-	if (!ItemTag.IsValid())
-	{
-		LOGE(TEXT("%s: %s failed because armor ItemTag was invalid."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(ItemTag.IsValid(), TEXT("%s: %s failed because armor ItemTag was invalid."), *GetNameSafe(this),
+	                OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GetItemDataRegistrySubsystem(OperationName);
 	return RegistrySubsystem
-		? RegistrySubsystem->FindTypedItemRow<FBG_ArmorItemDataRow>(EBG_ItemType::Armor, ItemTag)
-		: nullptr;
+		       ? RegistrySubsystem->FindTypedItemRow<FBG_ArmorItemDataRow>(EBG_ItemType::Armor, ItemTag)
+		       : nullptr;
 }
 
 const FBG_BackpackItemDataRow* UBG_EquipmentComponent::FindBackpackItemRow(
 	const FGameplayTag& ItemTag, const TCHAR* OperationName) const
 {
-	if (!ItemTag.IsValid())
-	{
-		LOGE(TEXT("%s: %s failed because backpack ItemTag was invalid."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(ItemTag.IsValid(), TEXT("%s: %s failed because backpack ItemTag was invalid."), *GetNameSafe(this),
+	                OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GetItemDataRegistrySubsystem(OperationName);
 	return RegistrySubsystem
-		? RegistrySubsystem->FindTypedItemRow<FBG_BackpackItemDataRow>(EBG_ItemType::Backpack, ItemTag)
-		: nullptr;
+		       ? RegistrySubsystem->FindTypedItemRow<FBG_BackpackItemDataRow>(EBG_ItemType::Backpack, ItemTag)
+		       : nullptr;
 }
 
 const FBG_ThrowableItemDataRow* UBG_EquipmentComponent::FindThrowableItemRow(
 	const FGameplayTag& ItemTag, const TCHAR* OperationName) const
 {
-	if (!ItemTag.IsValid())
-	{
-		LOGE(TEXT("%s: %s failed because throwable ItemTag was invalid."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(ItemTag.IsValid(), TEXT("%s: %s failed because throwable ItemTag was invalid."), *GetNameSafe(this),
+	                OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GetItemDataRegistrySubsystem(OperationName);
 	return RegistrySubsystem
-		? RegistrySubsystem->FindTypedItemRow<FBG_ThrowableItemDataRow>(EBG_ItemType::Throwable, ItemTag)
-		: nullptr;
+		       ? RegistrySubsystem->FindTypedItemRow<FBG_ThrowableItemDataRow>(EBG_ItemType::Throwable, ItemTag)
+		       : nullptr;
 }
 
 void UBG_EquipmentComponent::SetEquippedItemTag(EBG_EquipmentSlot Slot, const FGameplayTag& ItemTag)
@@ -969,6 +876,27 @@ void UBG_EquipmentComponent::SetArmorDurability(EBG_EquipmentSlot ArmorSlot, flo
 	}
 }
 
+void UBG_EquipmentComponent::SetEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot, ABG_EquippedWeaponBase* WeaponActor)
+{
+	switch (WeaponSlot)
+	{
+	case EBG_EquipmentSlot::PrimaryA:
+		EquippedWeaponActors.PrimaryAWeaponActor = WeaponActor;
+		break;
+	case EBG_EquipmentSlot::PrimaryB:
+		EquippedWeaponActors.PrimaryBWeaponActor = WeaponActor;
+		break;
+	case EBG_EquipmentSlot::Pistol:
+		EquippedWeaponActors.PistolWeaponActor = WeaponActor;
+		break;
+	case EBG_EquipmentSlot::Melee:
+		EquippedWeaponActors.MeleeWeaponActor = WeaponActor;
+		break;
+	default:
+		break;
+	}
+}
+
 void UBG_EquipmentComponent::NormalizeActiveWeaponSlot()
 {
 	if (PublicState.ActiveWeaponSlot != EBG_EquipmentSlot::None && !GetActiveWeaponItemTag().IsValid())
@@ -985,6 +913,228 @@ void UBG_EquipmentComponent::ForceEquipmentNetUpdate() const
 	}
 }
 
+bool UBG_EquipmentComponent::SpawnAndAttachEquippedWeaponActor(
+	EBG_EquipmentSlot WeaponSlot,
+	const FBG_WeaponItemDataRow& WeaponRow,
+	ABG_EquippedWeaponBase*& OutWeaponActor)
+{
+	OutWeaponActor = nullptr;
+
+	UWorld* World = GetWorld();
+	if (!ensureMsgf(World, TEXT("%s: SpawnAndAttachEquippedWeaponActor failed because World was null."),
+	                *GetNameSafe(this)))
+		return false;
+
+	UClass* EquippedWeaponClass = ResolveEquippedWeaponClass(
+		WeaponRow,
+		WeaponSlot,
+		TEXT("SpawnAndAttachEquippedWeaponActor"));
+	if (!EquippedWeaponClass)
+		return false;
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = CachedCharacter;
+	SpawnParameters.Instigator = CachedCharacter;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	ABG_EquippedWeaponBase* SpawnedWeaponActor = World->SpawnActor<ABG_EquippedWeaponBase>(
+		EquippedWeaponClass,
+		FTransform::Identity,
+		SpawnParameters);
+	if (!ensureMsgf(SpawnedWeaponActor,
+	                TEXT("%s: SpawnAndAttachEquippedWeaponActor failed because SpawnActor returned null for slot %s."),
+	                *GetNameSafe(this),
+	                *GetEquipmentSlotName(WeaponSlot)))
+		return false;
+
+	if (!SpawnedWeaponActor->InitializeEquippedWeapon(CachedCharacter))
+	{
+		LOGE(TEXT("%s: SpawnAndAttachEquippedWeaponActor failed because %s rejected owner initialization."),
+		     *GetNameSafe(this),
+		     *GetNameSafe(SpawnedWeaponActor));
+		SpawnedWeaponActor->Destroy();
+		return false;
+	}
+
+	if (!AttachEquippedWeaponActor(WeaponSlot, SpawnedWeaponActor))
+	{
+		SpawnedWeaponActor->NotifyUnequipped();
+		SpawnedWeaponActor->Destroy();
+		return false;
+	}
+
+	OutWeaponActor = SpawnedWeaponActor;
+	return true;
+}
+
+UClass* UBG_EquipmentComponent::ResolveEquippedWeaponClass(
+	const FBG_WeaponItemDataRow& WeaponRow,
+	EBG_EquipmentSlot WeaponSlot,
+	const TCHAR* OperationName) const
+{
+	if (WeaponRow.EquippedWeaponClass.IsNull())
+	{
+		LOGE(TEXT("%s: %s failed because weapon row %s has no EquippedWeaponClass for slot %s."),
+		     *GetNameSafe(this),
+		     OperationName,
+		     *WeaponRow.ItemTag.ToString(),
+		     *GetEquipmentSlotName(WeaponSlot));
+		return nullptr;
+	}
+
+	UClass* EquippedWeaponClass = WeaponRow.EquippedWeaponClass.LoadSynchronous();
+	if (!ensureMsgf(EquippedWeaponClass,
+	                TEXT("%s: %s failed to load EquippedWeaponClass %s for weapon %s."),
+	                *GetNameSafe(this),
+	                OperationName,
+	                *WeaponRow.EquippedWeaponClass.ToSoftObjectPath().ToString(),
+	                *WeaponRow.ItemTag.ToString()))
+		return nullptr;
+
+	if (!ensureMsgf(EquippedWeaponClass->IsChildOf(ABG_EquippedWeaponBase::StaticClass()),
+	                TEXT("%s: %s rejected class %s because it is not ABG_EquippedWeaponBase for weapon %s."),
+	                *GetNameSafe(this),
+	                OperationName,
+	                *GetNameSafe(EquippedWeaponClass),
+	                *WeaponRow.ItemTag.ToString()))
+		return nullptr;
+
+	return EquippedWeaponClass;
+}
+
+bool UBG_EquipmentComponent::AttachEquippedWeaponActor(
+	EBG_EquipmentSlot WeaponSlot,
+	ABG_EquippedWeaponBase* WeaponActor) const
+{
+	if (!ensureMsgf(IsValid(WeaponActor),
+	                TEXT("%s: AttachEquippedWeaponActor failed because WeaponActor was null for slot %s."),
+	                *GetNameSafe(this),
+	                *GetEquipmentSlotName(WeaponSlot)))
+		return false;
+
+	USceneComponent* AttachParent = GetWeaponAttachParent(TEXT("AttachEquippedWeaponActor"));
+	if (!AttachParent)
+		return false;
+
+	if (!ensureMsgf(CachedCharacter,
+	                TEXT("%s: AttachEquippedWeaponActor failed because CachedCharacter was null for slot %s."),
+	                *GetNameSafe(this),
+	                *GetEquipmentSlotName(WeaponSlot)))
+		return false;
+
+	const FName DesiredSocketName = CachedCharacter->GetDesiredWeaponSocketName(WeaponSlot);
+	if (!DesiredSocketName.IsNone() && !AttachParent->DoesSocketExist(DesiredSocketName))
+	{
+		LOGE(TEXT("%s: AttachEquippedWeaponActor failed because socket %s does not exist on %s for slot %s."),
+		     *GetNameSafe(this),
+		     *DesiredSocketName.ToString(),
+		     *GetNameSafe(AttachParent),
+		     *GetEquipmentSlotName(WeaponSlot));
+		return false;
+	}
+
+	const bool bAttached = WeaponActor->AttachToComponent(
+		AttachParent,
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		DesiredSocketName);
+	if (!ensureMsgf(bAttached,
+	                TEXT("%s: AttachEquippedWeaponActor failed to attach %s to %s socket %s."),
+	                *GetNameSafe(this),
+	                *GetNameSafe(WeaponActor),
+	                *GetNameSafe(AttachParent),
+	                *DesiredSocketName.ToString()))
+		return false;
+
+	const bool bIsActiveSlot = PublicState.ActiveWeaponSlot == WeaponSlot;
+	FTransform AttachTransform = bIsActiveSlot
+		                             ? WeaponActor->GetHandAttachTransform()
+		                             : WeaponActor->GetBackAttachTransform();
+
+	if (bIsActiveSlot && !WeaponActor->GetGripSocketName().IsNone())
+	{
+		FTransform GripWorldTransform;
+		if (WeaponActor->GetGripTransform(GripWorldTransform))
+		{
+			FTransform GripActorTransform = GripWorldTransform.GetRelativeTransform(WeaponActor->GetActorTransform());
+			GripActorTransform.SetScale3D(FVector::OneVector);
+			AttachTransform = GripActorTransform.Inverse() * WeaponActor->GetHandAttachTransform();
+		}
+		else
+		{
+			LOGE(TEXT("%s: AttachEquippedWeaponActor fell back to HandAttachTransform because %s could not resolve grip socket %s."),
+			     *GetNameSafe(this),
+			     *GetNameSafe(WeaponActor),
+			     *WeaponActor->GetGripSocketName().ToString());
+		}
+	}
+
+	WeaponActor->SetActorRelativeTransform(AttachTransform);
+	return true;
+}
+
+USceneComponent* UBG_EquipmentComponent::GetWeaponAttachParent(const TCHAR* OperationName) const
+{
+	if (!ensureMsgf(CachedCharacter,
+	                TEXT("%s: %s failed because CachedCharacter was null."),
+	                *GetNameSafe(this),
+	                OperationName))
+		return nullptr;
+
+	USceneComponent* AttachParent = CachedCharacter->GetBodyAnimationMesh();
+	if (!ensureMsgf(AttachParent,
+	                TEXT("%s: %s failed because owning character %s had no body mesh."),
+	                *GetNameSafe(this),
+	                OperationName,
+	                *GetNameSafe(CachedCharacter)))
+		return nullptr;
+
+	return AttachParent;
+}
+
+void UBG_EquipmentComponent::RefreshEquippedWeaponAttachments()
+{
+	for (const EBG_EquipmentSlot WeaponSlot : {
+		     EBG_EquipmentSlot::PrimaryA,
+		     EBG_EquipmentSlot::PrimaryB,
+		     EBG_EquipmentSlot::Pistol,
+		     EBG_EquipmentSlot::Melee
+	     })
+	{
+		ABG_EquippedWeaponBase* WeaponActor = GetEquippedWeaponActor(WeaponSlot);
+		if (!WeaponActor)
+		{
+			continue;
+		}
+
+		if (!AttachEquippedWeaponActor(WeaponSlot, WeaponActor))
+		{
+			LOGE(TEXT("%s: RefreshEquippedWeaponAttachments failed for slot %s actor %s."),
+			     *GetNameSafe(this),
+			     *GetEquipmentSlotName(WeaponSlot),
+			     *GetNameSafe(WeaponActor));
+		}
+	}
+}
+
+void UBG_EquipmentComponent::DestroyEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot)
+{
+	ABG_EquippedWeaponBase* WeaponActor = GetEquippedWeaponActor(WeaponSlot);
+	SetEquippedWeaponActor(WeaponSlot, nullptr);
+	DestroyEquippedWeaponActorInstance(WeaponActor);
+}
+
+void UBG_EquipmentComponent::DestroyEquippedWeaponActorInstance(ABG_EquippedWeaponBase* WeaponActor) const
+{
+	if (!WeaponActor)
+	{
+		return;
+	}
+
+	WeaponActor->NotifyUnequipped();
+	WeaponActor->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	WeaponActor->Destroy();
+}
+
 bool UBG_EquipmentComponent::SpawnDroppedEquipmentItem(
 	EBG_ItemType DroppedItemType,
 	const FGameplayTag& DroppedItemTag,
@@ -999,14 +1149,9 @@ bool UBG_EquipmentComponent::SpawnDroppedEquipmentItem(
 		1,
 		DroppedLoadedAmmo);
 
-	if (!SpawnedWorldItem)
-	{
-		LOGE(TEXT("%s: SpawnDroppedEquipmentItem failed for %s %s."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(DroppedItemType),
-		     *DroppedItemTag.ToString());
+	if (!ensureMsgf(SpawnedWorldItem, TEXT("%s: SpawnDroppedEquipmentItem failed for %s %s."),
+	                *GetNameSafe(this), *GetItemTypeName(DroppedItemType), *DroppedItemTag.ToString()))
 		return false;
-	}
 
 	return true;
 }
@@ -1014,11 +1159,8 @@ bool UBG_EquipmentComponent::SpawnDroppedEquipmentItem(
 FTransform UBG_EquipmentComponent::BuildDropTransform() const
 {
 	const AActor* Owner = GetOwner();
-	if (!IsValid(Owner))
-	{
-		LOGE(TEXT("%s: BuildDropTransform failed because owner was null."), *GetNameSafe(this));
+	if (!ensureMsgf(IsValid(Owner), TEXT("%s: BuildDropTransform failed because owner was null."), *GetNameSafe(this)))
 		return FTransform::Identity;
-	}
 
 	const FVector DropLocation = Owner->GetActorLocation()
 		+ Owner->GetActorForwardVector() * 120.f
@@ -1032,13 +1174,10 @@ void UBG_EquipmentComponent::NotifyEquipmentFailure(
 	EBG_EquipmentSlot EquipmentSlot) const
 {
 	ABG_Character* OwnerCharacter = Cast<ABG_Character>(GetOwner());
-	if (!OwnerCharacter)
-	{
-		LOGE(TEXT("%s: NotifyEquipmentFailure failed because owner was not ABG_Character. FailReason=%d"),
-		     *GetNameSafe(this),
-		     static_cast<int32>(FailReason));
+	if (!ensureMsgf(OwnerCharacter,
+	                TEXT("%s: NotifyEquipmentFailure failed because owner was not ABG_Character. FailReason=%d"),
+	                *GetNameSafe(this), static_cast<int32>(FailReason)))
 		return;
-	}
 
 	EBG_ItemType FailureItemType = EBG_ItemType::None;
 	if (IsWeaponSlot(EquipmentSlot))
@@ -1065,16 +1204,12 @@ void UBG_EquipmentComponent::ApplyActiveWeaponStateToCharacter()
 {
 	AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
-	{
 		return;
-	}
 
-	if (!CachedCharacter)
-	{
-		LOGE(TEXT("%s: ApplyActiveWeaponStateToCharacter failed because CachedCharacter was null."),
-		     *GetNameSafe(this));
+	if (!ensureMsgf(CachedCharacter,
+	                TEXT("%s: ApplyActiveWeaponStateToCharacter failed because CachedCharacter was null."),
+	                *GetNameSafe(this)))
 		return;
-	}
 
 	const FGameplayTag ActiveWeaponTag = GetActiveWeaponItemTag();
 	if (!ActiveWeaponTag.IsValid())

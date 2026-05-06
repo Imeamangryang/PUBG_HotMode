@@ -10,6 +10,7 @@
 #include "Player/BG_PlayerController.h"
 #include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/CameraShakeBase.h"
 #include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
@@ -80,6 +81,8 @@ ABG_Character::ABG_Character()
 	bIsWeaponEquipped = false;
 	EquippedWeaponPoseType = EBGWeaponPoseType::None;
 	bIsAiming = false;
+	GetCharacterMovement()->MaxWalkSpeed = StandingWalkSpeed;
+	GetCharacterMovement()->MaxWalkSpeedCrouched = CrouchWalkSpeed;
 	UpdateDerivedState();
 }
 
@@ -364,22 +367,20 @@ void ABG_Character::ToggleProneFromInput()
 {
 	if (bIsDead || !bCanEnterProne) return;
 
-	// 1. 만약 앉아 있었다면 앉기 해제 (중요!)
+	// 클라이언트에서만 호출되면 서버가 상태를 가지지 못하기 때문에 서버로 전달
+	const bool bNewIsProne = !bIsProne;
+	if (!HasAuthority())
+	{
+		Server_SetProneState(bNewIsProne);
+		return;
+	}
+
 	if (bIsCrouched)
 	{
 		UnCrouch();
 	}
 
-	// 2. 엎드리기 토글
-	bIsProne = !bIsProne;
-
-	// 3. 만약 엎드리기로 들어갔다면, 앉기 변수도 확실히 False 처리
-	if (bIsProne)
-	{
-		// UnCrouch()가 내부적으로 bIsCrouched를 false로 만들지만, 
-		// 애니메이션 블루프린트 전달용 변수가 있다면 여기서 명시적 정리
-	}
-
+	bIsProne = bNewIsProne;
 	UpdateDerivedState();
 }
 
@@ -1153,6 +1154,7 @@ void ABG_Character::UpdateDerivedState()
 	bIsCrouchingState = bIsCrouched;
 
 	UpdateCharacterStance();
+	ApplyMovementSpeedForStance();
 	UpdateActionAvailability();
 }
 
@@ -1167,7 +1169,7 @@ void ABG_Character::UpdateActionAvailability()
 
 	bCanAim = bHasWeapon && !bIsReloading && !bIsDead;
 	bCanReload = bHasWeapon && !bIsReloading && !bIsDead;
-	bCanFire = !bIsBusy;
+	bCanFire = bHasWeapon && !bIsBusy;
 	bCanUseMeleeAttack = !bHasWeapon && !bIsBusy;
 	bCanEnterCrouch = !bIsDead;
 	bCanEnterProne = !bIsDead && !bIsFalling;
@@ -1199,6 +1201,56 @@ void ABG_Character::UpdateCharacterStance()
 	}
 
 	CharacterStance = EBGCharacterStance::Standing;
+}
+
+void ABG_Character::ApplyMovementSpeedForStance()
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: ApplyMovementSpeedForStance failed because CharacterMovement was null."), *GetNameSafe(this));
+		return;
+	}
+
+	MovementComponent->MaxWalkSpeedCrouched = CrouchWalkSpeed;
+	MovementComponent->MaxWalkSpeed = bIsProne ? ProneWalkSpeed : StandingWalkSpeed;
+}
+
+void ABG_Character::Server_SetProneState_Implementation(bool bNewIsProne)
+{
+	if (bIsDead || !bCanEnterProne)
+	{
+		return;
+	}
+
+	if (bIsCrouched)
+	{
+		UnCrouch();
+	}
+
+	bIsProne = bNewIsProne;
+	UpdateDerivedState();
+}
+
+bool ABG_Character::Server_SetProneState_Validate(bool bNewIsProne)
+{
+	return true;
+}
+
+void ABG_Character::Client_ApplyRecoil_Implementation(float PitchDelta, float YawDelta, TSubclassOf<UCameraShakeBase> CameraShakeClass, float CameraShakeScale)
+{
+	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+	{
+		FRotator NewControlRotation = PlayerController->GetControlRotation();
+		NewControlRotation.Pitch = FMath::ClampAngle(NewControlRotation.Pitch + PitchDelta, -89.0f, 89.0f);
+		NewControlRotation.Yaw = FMath::Fmod(NewControlRotation.Yaw + YawDelta + 360.0f, 360.0f);
+		PlayerController->SetControlRotation(NewControlRotation);
+
+		if (CameraShakeClass)
+		{
+			PlayerController->ClientStartCameraShake(CameraShakeClass, CameraShakeScale, ECameraShakePlaySpace::CameraLocal);
+		}
+	}
 }
 
 void ABG_Character::ClearTimedCharacterState()

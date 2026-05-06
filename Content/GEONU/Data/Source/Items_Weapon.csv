@@ -1,5 +1,5 @@
-Name,ItemType,ItemTag,DisplayName,Description,Icon,WorldItemClass,UnitWeight,bStackable,MaxStackSize,EquipSlot,WeaponPoseCategory,AmmoItemTag,MagazineSize,ReloadDuration
-Item.Weapon.AR,Weapon,Item.Weapon.AR,Assault Rifle,Primary rifle weapon,,,0.0,false,1,Primary,Rifle,Item.Ammo.556mm,30,2.4
-Item.Weapon.SR,Weapon,Item.Weapon.SR,Sniper Rifle,Primary sniper weapon,,,0.0,false,1,Primary,Rifle,Item.Ammo.762mm,5,3.6
-Item.Weapon.Pistol,Weapon,Item.Weapon.Pistol,Pistol,Sidearm weapon,,,0.0,false,1,Pistol,Pistol,Item.Ammo.556mm,15,1.8
-Item.Weapon.Melee,Weapon,Item.Weapon.Melee,Melee Weapon,Close range weapon,,,0.0,false,1,Melee,None,,0,0.0
+Name,ItemType,ItemTag,DisplayName,Description,Icon,WorldItemClass,UnitWeight,bStackable,MaxStackSize,EquipSlot,WeaponPoseCategory,AmmoItemTag,MagazineSize,ReloadDuration,TacticalReloadDuration,SingleBulletInitialReloadDuration,SingleBulletRepeatReloadDuration,EquippedWeaponClass
+Item.Weapon.AR.M416,Weapon,Item.Weapon.AR.M416,M416,5.56mm assault rifle,/Script/Engine.Texture2D'/Game/GEONU/Textures/T_M416.T_M416',Class'/Game/GEONU/Blueprints/Items/BP_WorldItem_M416.BP_WorldItem_M416_C',3.5,FALSE,1,Primary,Rifle,Item.Ammo.556,30,3.1,2.4,0,0,Class'/Game/GEONU/Blueprints/Weapons/BP_Weapon_M416.BP_Weapon_M416_C'
+Item.Weapon.SR.Kar98k,Weapon,Item.Weapon.SR.Kar98k,Kar98k,7.62mm bolt-action sniper rifle,,Class'/Script/PUBG_HotMode.BG_WorldItemBase',4.2,FALSE,1,Primary,Rifle,Item.Ammo.762,5,4,0,1.69,0.75,Class'/Script/PUBG_HotMode.BG_EquippedWeaponBase'
+Item.Weapon.Pistol.P92,Weapon,Item.Weapon.Pistol.P92,P92,9mm sidearm pistol,,Class'/Script/PUBG_HotMode.BG_WorldItemBase',1,FALSE,1,Pistol,Pistol,Item.Ammo.9mm,15,2,1.7,0,0,Class'/Script/PUBG_HotMode.BG_EquippedWeaponBase'
+Item.Weapon.Melee.Pan,Weapon,Item.Weapon.Melee.Pan,Pan,Melee pan weapon,,Class'/Script/PUBG_HotMode.BG_WorldItemBase',1.2,FALSE,1,Melee,None,,0,0,0,0,0,Class'/Script/PUBG_HotMode.BG_EquippedWeaponBase'

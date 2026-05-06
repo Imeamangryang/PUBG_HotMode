@@ -377,13 +377,31 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 	const FVector ShotStart = ViewLocation;
 	const FVector BaseShotDirection = ViewRotation.Vector();
 
+	const float RecoilPitchOffset = FireSettings->RecoilPitchDegrees > 0.f
+		? FMath::RandRange(0.0f, FireSettings->RecoilPitchDegrees)
+		: 0.f;
+	const float RecoilYawOffset = FireSettings->RecoilYawDegrees > 0.f
+		? FMath::RandRange(-FireSettings->RecoilYawDegrees, FireSettings->RecoilYawDegrees)
+		: 0.f;
+
+	const FVector RecoiledBaseDirection = FRotator(RecoilPitchOffset, RecoilYawOffset, 0.f).RotateVector(BaseShotDirection);
+
+	if (CachedCharacter && CachedCharacter->GetLocalRole() == ROLE_Authority)
+	{
+		CachedCharacter->Client_ApplyRecoil(
+			RecoilPitchOffset * 0.75f,
+			RecoilYawOffset * 0.75f,
+			FireSettings->CameraShakeClass,
+			FireSettings->CameraShakeIntensity);
+	}
+
 	const int32 PelletCount = FMath::Max(1, FireSettings->PelletCount);
 	for (int32 PelletIndex = 0; PelletIndex < PelletCount; ++PelletIndex)
 	{
 		const float SpreadRadians = FMath::DegreesToRadians(FireSettings->SpreadAngleDegrees);
 		const FVector ShotDirection = SpreadRadians > 0.f
-			? FMath::VRandCone(BaseShotDirection, SpreadRadians)
-			: BaseShotDirection;
+			? FMath::VRandCone(RecoiledBaseDirection, SpreadRadians)
+			: RecoiledBaseDirection;
 		const FVector ShotEnd = ShotStart + (ShotDirection * FireSettings->Range);
 
 		FHitResult HitResult;
@@ -505,7 +523,7 @@ void UBG_WeaponFireComponent::PlayWeaponFireAnimation(EBGWeaponPoseType WeaponPo
 
 	if (MontageToPlay)
 	{
-		BodyMesh->GetAnimInstance()->Montage_Play(MontageToPlay);
+		BodyMesh->GetAnimInstance()->Montage_Play(MontageToPlay, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, false);
 	}
 }
 

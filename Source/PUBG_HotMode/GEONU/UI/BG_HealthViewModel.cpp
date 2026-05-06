@@ -18,11 +18,8 @@ void UBG_HealthViewModel::BeginPlay()
 	Super::BeginPlay();
 
 	auto* PC = Cast<APlayerController>(GetOwner());
-	if (!PC)
-	{
-		LOGE(TEXT("%s must be owned by PlayerController."), *GetNameSafe(this));
+	if (!ensureMsgf(PC, TEXT("%s must be owned by PlayerController."), *GetNameSafe(this)))
 		return;
-	}
 
 	if (!PC->IsLocalController()) return;
 
@@ -38,26 +35,21 @@ void UBG_HealthViewModel::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void UBG_HealthViewModel::NotifyPossessedCharacterReady(ABG_Character* InCharacter)
 {
 	const APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (!PC)
-	{
-		LOGE(TEXT("%s must be owned by APlayerController to bind possessed character"), *GetNameSafe(this));
+	if (!ensureMsgf(PC, TEXT("%s must be owned by APlayerController to bind possessed character"), *GetNameSafe(this)))
 		return;
-	}
 
 	if (!PC->IsLocalController()) return;
 
-	if (!InCharacter)
+	if (!ensureMsgf(InCharacter, TEXT("%s received a null character in NotifyPossessedCharacterReady"), *GetNameSafe(this)))
 	{
 		UnbindFromHealthComponent();
-		LOGE(TEXT("%s received a null character in NotifyPossessedCharacterReady"), *GetNameSafe(this));
 		return;
 	}
 
 	UBG_HealthComponent* HealthComponent = InCharacter->GetHealthComponent();
-	if (!HealthComponent)
+	if (!ensureMsgf(HealthComponent, TEXT("%s could not bind because %s had no HealthComponent"), *GetNameSafe(this), *GetNameSafe(InCharacter)))
 	{
 		UnbindFromHealthComponent();
-		LOGE(TEXT("%s could not bind because %s had no HealthComponent"), *GetNameSafe(this), *GetNameSafe(InCharacter));
 		return;
 	}
 
@@ -67,11 +59,8 @@ void UBG_HealthViewModel::NotifyPossessedCharacterReady(ABG_Character* InCharact
 void UBG_HealthViewModel::NotifyPossessedCharacterCleared()
 {
 	const APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (!PC)
-	{
-		LOGE(TEXT("%s must be owned by APlayerController to clear possessed character binding"), *GetNameSafe(this));
+	if (!ensureMsgf(PC, TEXT("%s must be owned by APlayerController to clear possessed character binding"), *GetNameSafe(this)))
 		return;
-	}
 
 	if (!PC->IsLocalController()) return;
 
@@ -104,28 +93,20 @@ void UBG_HealthViewModel::ForceUpdateAllAttributes()
 void UBG_HealthViewModel::BindToHealthComponent(UBG_HealthComponent* InHealthComponent)
 {
 	auto* PC = Cast<APlayerController>(GetOwner());
-	if (!PC)
-	{
-		LOGE(TEXT("%s must be owned by APlayerController to bind HealthComponent"), *GetNameSafe(this));
+	if (!ensureMsgf(PC, TEXT("%s must be owned by APlayerController to bind HealthComponent"), *GetNameSafe(this)))
 		return;
-	}
 
 	if (!PC->IsLocalController()) return;
 
-	if (!InHealthComponent)
-	{
-		LOGE(TEXT("%s received a null HealthComponent in BindToHealthComponent"), *GetNameSafe(this));
+	if (!ensureMsgf(InHealthComponent, TEXT("%s received a null HealthComponent in BindToHealthComponent"), *GetNameSafe(this)))
 		return;
-	}
 
-	if (InHealthComponent->GetOwner() != PC->GetPawn())
-	{
-		LOGE(TEXT("%s tried to bind a non-possessed HealthComponent. Pawn=%s, ComponentOwner=%s"),
-		     *GetNameSafe(this),
-		     *GetNameSafe(PC->GetPawn()),
-		     *GetNameSafe(InHealthComponent->GetOwner()));
+	if (!ensureMsgf(InHealthComponent->GetOwner() == PC->GetPawn(),
+	                TEXT("%s tried to bind a non-possessed HealthComponent. Pawn=%s, ComponentOwner=%s"),
+	                *GetNameSafe(this),
+	                *GetNameSafe(PC->GetPawn()),
+	                *GetNameSafe(InHealthComponent->GetOwner())))
 		return;
-	}
 
 	// Skip if already bound to the same component
 	if (BoundHealthComponent == InHealthComponent)
@@ -159,9 +140,8 @@ void UBG_HealthViewModel::UnbindFromHealthComponent()
 void UBG_HealthViewModel::RefreshFromHealthComponent()
 {
 	const UBG_HealthComponent* HealthComponent = BoundHealthComponent.Get();
-	if (!HealthComponent)
+	if (!ensureMsgf(HealthComponent, TEXT("%s could not refresh because BoundHealthComponent was null"), *GetNameSafe(this)))
 	{
-		LOGE(TEXT("%s could not refresh because BoundHealthComponent was null"), *GetNameSafe(this));
 		HealthPercent = 0.f;
 		BoostPercent = 0.f;
 		bIsDead = false;
@@ -194,11 +174,8 @@ void UBG_HealthViewModel::ReceiveHealthChanged(float NewHealth, float MaxHealth,
 void UBG_HealthViewModel::ReceiveBoostChanged(float NewBoostGauge)
 {
 	const UBG_HealthComponent* HealthComponent = BoundHealthComponent.Get();
-	if (!HealthComponent)
-	{
-		LOGE(TEXT("%s could not receive boost change because BoundHealthComponent was null. NewBoostGauge=%.2f"), *GetNameSafe(this), NewBoostGauge);
+	if (!ensureMsgf(HealthComponent, TEXT("%s could not receive boost change because BoundHealthComponent was null. NewBoostGauge=%.2f"), *GetNameSafe(this), NewBoostGauge))
 		return;
-	}
 
 	const float NewPercent = HealthComponent->GetBoostPercent();
 	if (!FMath::IsNearlyEqual(BoostPercent, NewPercent))

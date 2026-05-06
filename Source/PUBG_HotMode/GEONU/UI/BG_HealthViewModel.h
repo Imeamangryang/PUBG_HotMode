@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+ï»¿// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -6,7 +6,7 @@
 #include "Components/ActorComponent.h"
 #include "BG_HealthViewModel.generated.h"
 
-// ¦¡¦¡ Shared delegate types ¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡¦¡
+//Shared delegate types
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnBGHUD_FloatBoolValueChanged, float, Value, bool, bValue);

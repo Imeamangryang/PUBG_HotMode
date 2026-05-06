@@ -11,6 +11,7 @@ class UBG_DamageSystem;
 class UBG_EquipmentComponent;
 class UBG_InventoryComponent;
 class UBG_ItemDataRegistrySubsystem;
+class UCameraShakeBase;
 struct FBG_WeaponItemDataRow;
 enum class EBG_EquipmentSlot : uint8;
 
@@ -43,6 +44,21 @@ struct FBGWeaponFireSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
 	float SpreadAngleDegrees = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+	float RecoilPitchDegrees = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+	float RecoilYawDegrees = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+	float CameraShakeDuration = 0.1f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+	float CameraShakeIntensity = 3.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Weapon")
+	TSubclassOf<UCameraShakeBase> CameraShakeClass;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
 	float DebugSphereRadius = 12.f;
@@ -224,6 +240,12 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
 	FName FireMontageSlotName = TEXT("UpperBody");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
+	FName CrouchFireMontageSlotName = TEXT("CrouchUpperBody");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
+	FName ProneFireMontageSlotName = TEXT("ProneUpperBody");
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float TemporaryReloadDuration = 1.5f;

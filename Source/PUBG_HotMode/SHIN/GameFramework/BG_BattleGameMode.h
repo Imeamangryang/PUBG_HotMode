@@ -21,4 +21,11 @@ public:
 
 protected:
 	void SpawnAndPossessPlayer(APlayerController* NewPlayer);
+	void StartPreparationPhase();
+	void TickPreparationPhase();
+	
+	UPROPERTY(EditDefaultsOnly, Category = "BG|Battle")
+	int32 PreparationDuration = 30;
+
+	FTimerHandle PreparationTimerHandle;
 };

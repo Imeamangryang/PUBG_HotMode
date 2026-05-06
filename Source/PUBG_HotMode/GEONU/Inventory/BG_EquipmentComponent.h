@@ -9,9 +9,11 @@
 #include "BG_EquipmentComponent.generated.h"
 
 class ABG_Character;
+class ABG_EquippedWeaponBase;
 class ABG_WorldItemBase;
 class UBG_InventoryComponent;
 class UBG_ItemDataRegistrySubsystem;
+class USceneComponent;
 struct FBG_ArmorItemDataRow;
 struct FBG_BackpackItemDataRow;
 struct FBG_ThrowableItemDataRow;
@@ -97,6 +99,25 @@ struct PUBG_HOTMODE_API FBG_EquipmentOwnerState
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Equipment|Armor", meta=(ClampMin="0.0"))
 	float VestDurability = 0.f;
+};
+
+/// Replicated equipped weapon actor references for owner and remote visuals
+USTRUCT(BlueprintType)
+struct PUBG_HOTMODE_API FBG_EquippedWeaponActorState
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Equipment|Weapon")
+	TObjectPtr<ABG_EquippedWeaponBase> PrimaryAWeaponActor = nullptr;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Equipment|Weapon")
+	TObjectPtr<ABG_EquippedWeaponBase> PrimaryBWeaponActor = nullptr;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Equipment|Weapon")
+	TObjectPtr<ABG_EquippedWeaponBase> PistolWeaponActor = nullptr;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Equipment|Weapon")
+	TObjectPtr<ABG_EquippedWeaponBase> MeleeWeaponActor = nullptr;
 };
 
 // --- Component declaration ---
@@ -197,6 +218,12 @@ public: // --- Equipment Query ---
 	UFUNCTION(BlueprintPure, Category="Equipment|Weapon")
 	int32 GetLoadedAmmo(EBG_EquipmentSlot WeaponSlot) const;
 
+	UFUNCTION(BlueprintPure, Category="Equipment|Weapon")
+	ABG_EquippedWeaponBase* GetEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot) const;
+
+	UFUNCTION(BlueprintPure, Category="Equipment|Weapon")
+	ABG_EquippedWeaponBase* GetActiveEquippedWeaponActor() const;
+
 	UFUNCTION(BlueprintPure, Category="Equipment|Armor")
 	float GetArmorDurability(EBG_EquipmentSlot ArmorSlot) const;
 
@@ -245,12 +272,29 @@ private: // --- State Mutation ---
 	void SetEquippedItemTag(EBG_EquipmentSlot Slot, const FGameplayTag& ItemTag);
 	void SetLoadedAmmo(EBG_EquipmentSlot WeaponSlot, int32 LoadedAmmo);
 	void SetArmorDurability(EBG_EquipmentSlot ArmorSlot, float Durability);
+	void SetEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot, ABG_EquippedWeaponBase* WeaponActor);
 
 	/// Active slot validity normalization
 	void NormalizeActiveWeaponSlot();
 
 	/// Net update request
 	void ForceEquipmentNetUpdate() const;
+
+	bool SpawnAndAttachEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot, const FBG_WeaponItemDataRow& WeaponRow,
+	                                       ABG_EquippedWeaponBase*& OutWeaponActor);
+
+	UClass* ResolveEquippedWeaponClass(const FBG_WeaponItemDataRow& WeaponRow, EBG_EquipmentSlot WeaponSlot,
+	                                   const TCHAR* OperationName) const;
+
+	bool AttachEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot, ABG_EquippedWeaponBase* WeaponActor) const;
+
+	USceneComponent* GetWeaponAttachParent(const TCHAR* OperationName) const;
+
+	void RefreshEquippedWeaponAttachments();
+
+	void DestroyEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot);
+
+	void DestroyEquippedWeaponActorInstance(ABG_EquippedWeaponBase* WeaponActor) const;
 
 	bool SpawnDroppedEquipmentItem(EBG_ItemType DroppedItemType, const FGameplayTag& DroppedItemTag,
 	                               int32 DroppedLoadedAmmo) const;
@@ -293,6 +337,13 @@ private: // --- Data ---
 
 	UFUNCTION()
 	void OnRep_OwnerState();
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_EquippedWeaponActors,
+		Category="Equipment", meta=(AllowPrivateAccess="true"))
+	FBG_EquippedWeaponActorState EquippedWeaponActors;
+
+	UFUNCTION()
+	void OnRep_EquippedWeaponActors();
 
 	/// Cached owning character
 	UPROPERTY(Transient)

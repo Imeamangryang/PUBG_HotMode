@@ -84,19 +84,14 @@ void UBG_ItemUseComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 
 UBG_ItemUseComponent* UBG_ItemUseComponent::FindItemUseComponent(AActor* TargetActor)
 {
-	if (!IsValid(TargetActor))
-	{
-		LOGE(TEXT("FindItemUseComponent failed because target actor was null or invalid."));
+	if (!ensureMsgf(IsValid(TargetActor),
+	                TEXT("FindItemUseComponent failed because target actor was null or invalid.")))
 		return nullptr;
-	}
 
 	UBG_ItemUseComponent* ItemUseComponent = TargetActor->FindComponentByClass<UBG_ItemUseComponent>();
-	if (!ItemUseComponent)
-	{
-		LOGE(TEXT("FindItemUseComponent failed because %s has no item use component."),
-		     *GetNameSafe(TargetActor));
+	if (!ensureMsgf(ItemUseComponent, TEXT("FindItemUseComponent failed because %s has no item use component."),
+	                *GetNameSafe(TargetActor)))
 		return nullptr;
-	}
 
 	return ItemUseComponent;
 }
@@ -176,23 +171,16 @@ bool UBG_ItemUseComponent::TryStartUseItem(
 	OutFailReason = EBGInventoryFailReason::ServerRejected;
 
 	if (!CanMutateItemUseState(TEXT("TryStartUseItem")))
-	{
 		return false;
-	}
 
-	if (!GetWorld())
-	{
-		LOGE(TEXT("%s: TryStartUseItem failed because World was null."), *GetNameSafe(this));
+	if (!ensureMsgf(GetWorld(), TEXT("%s: TryStartUseItem failed because World was null."), *GetNameSafe(this)))
 		return false;
-	}
 
 	CacheOwnerComponents();
 
 	float UseDuration = 0.f;
 	if (!ValidateUseStart(ItemType, ItemTag, UseDuration, OutFailReason))
-	{
 		return false;
-	}
 
 	BeginItemUse(ItemType, ItemTag, UseDuration);
 	OutFailReason = EBGInventoryFailReason::None;
@@ -202,14 +190,10 @@ bool UBG_ItemUseComponent::TryStartUseItem(
 float UBG_ItemUseComponent::GetItemUseProgress() const
 {
 	if (!ItemUseState.bIsUsingItem)
-	{
 		return 0.f;
-	}
 
 	if (ItemUseState.UseDuration <= KINDA_SMALL_NUMBER)
-	{
 		return 1.f;
-	}
 
 	const float ElapsedTime = FMath::Max(0.f, GetServerWorldTimeSeconds() - ItemUseState.UseStartServerTime);
 	return FMath::Clamp(ElapsedTime / ItemUseState.UseDuration, 0.f, 1.f);
@@ -218,9 +202,7 @@ float UBG_ItemUseComponent::GetItemUseProgress() const
 float UBG_ItemUseComponent::GetRemainingUseTime() const
 {
 	if (!ItemUseState.bIsUsingItem)
-	{
 		return 0.f;
-	}
 
 	const float ElapsedTime = FMath::Max(0.f, GetServerWorldTimeSeconds() - ItemUseState.UseStartServerTime);
 	return FMath::Max(0.f, ItemUseState.UseDuration - ElapsedTime);
@@ -268,43 +250,25 @@ void UBG_ItemUseComponent::HandleActiveWeaponSlotChanged(EBG_EquipmentSlot Activ
 void UBG_ItemUseComponent::CacheOwnerComponents()
 {
 	AActor* Owner = GetOwner();
-	if (!IsValid(Owner))
-	{
-		LOGE(TEXT("%s: CacheOwnerComponents failed because owner was null."), *GetNameSafe(this));
+	if (!ensureMsgf(IsValid(Owner), TEXT("%s: CacheOwnerComponents failed because owner was null."),
+	                *GetNameSafe(this)))
 		return;
-	}
 
 	CachedCharacter = Cast<ABG_Character>(Owner);
-	if (!CachedCharacter)
-	{
-		LOGE(TEXT("%s: CacheOwnerComponents failed because owner %s was not ABG_Character."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(Owner));
-	}
+	ensureMsgf(CachedCharacter, TEXT("%s: CacheOwnerComponents failed because owner %s was not ABG_Character."),
+	           *GetNameSafe(this), *GetNameSafe(Owner));
 
 	CachedInventory = Owner->FindComponentByClass<UBG_InventoryComponent>();
-	if (!CachedInventory)
-	{
-		LOGE(TEXT("%s: CacheOwnerComponents failed because owner %s had no InventoryComponent."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(Owner));
-	}
+	ensureMsgf(CachedInventory, TEXT("%s: CacheOwnerComponents failed because owner %s had no InventoryComponent."),
+	           *GetNameSafe(this), *GetNameSafe(Owner));
 
 	CachedHealth = Owner->FindComponentByClass<UBG_HealthComponent>();
-	if (!CachedHealth)
-	{
-		LOGE(TEXT("%s: CacheOwnerComponents failed because owner %s had no HealthComponent."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(Owner));
-	}
+	ensureMsgf(CachedHealth, TEXT("%s: CacheOwnerComponents failed because owner %s had no HealthComponent."),
+	           *GetNameSafe(this), *GetNameSafe(Owner));
 
 	CachedEquipment = Owner->FindComponentByClass<UBG_EquipmentComponent>();
-	if (!CachedEquipment)
-	{
-		LOGE(TEXT("%s: CacheOwnerComponents failed because owner %s had no EquipmentComponent."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(Owner));
-	}
+	ensureMsgf(CachedEquipment, TEXT("%s: CacheOwnerComponents failed because owner %s had no EquipmentComponent."),
+	           *GetNameSafe(this), *GetNameSafe(Owner));
 }
 
 void UBG_ItemUseComponent::BindCancelDelegates()
@@ -340,20 +304,12 @@ void UBG_ItemUseComponent::UnbindCancelDelegates()
 bool UBG_ItemUseComponent::CanMutateItemUseState(const TCHAR* OperationName) const
 {
 	const AActor* Owner = GetOwner();
-	if (!IsValid(Owner))
-	{
-		LOGE(TEXT("%s: %s failed because owner was null."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(IsValid(Owner), TEXT("%s: %s failed because owner was null."), *GetNameSafe(this), OperationName))
 		return false;
-	}
 
-	if (!Owner->HasAuthority())
-	{
-		LOGE(TEXT("%s: %s failed because owner %s had no authority."),
-		     *GetNameSafe(this),
-		     OperationName,
-		     *GetNameSafe(Owner));
+	if (!ensureMsgf(Owner->HasAuthority(), TEXT("%s: %s failed because owner %s had no authority."),
+	                *GetNameSafe(this), OperationName, *GetNameSafe(Owner)))
 		return false;
-	}
 
 	return true;
 }
@@ -372,56 +328,45 @@ bool UBG_ItemUseComponent::ValidateUseStart(
 	OutUseDuration = 0.f;
 	OutFailReason = EBGInventoryFailReason::ServerRejected;
 
-	if (ItemUseState.bIsUsingItem)
+	if (!ensureMsgf(
+		!ItemUseState.bIsUsingItem,
+		TEXT("%s: ValidateUseStart failed because another item is already being used. ItemType=%s, ItemTag=%s."),
+		*GetNameSafe(this), *GetItemTypeName(ItemUseState.ItemType), *ItemUseState.ItemTag.ToString()))
 	{
-		LOGE(TEXT("%s: ValidateUseStart failed because another item is already being used. ItemType=%s, ItemTag=%s."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(ItemUseState.ItemType),
-		     *ItemUseState.ItemTag.ToString());
 		OutFailReason = EBGInventoryFailReason::AlreadyUsingItem;
 		return false;
 	}
 
-	if (!IsSupportedItemUseType(ItemType))
+	if (!ensureMsgf(IsSupportedItemUseType(ItemType),
+	                TEXT("%s: ValidateUseStart failed because item type %s is not usable here."),
+	                *GetNameSafe(this), *GetItemTypeName(ItemType)))
 	{
-		LOGE(TEXT("%s: ValidateUseStart failed because item type %s is not usable here."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(ItemType));
 		OutFailReason = EBGInventoryFailReason::InvalidItem;
 		return false;
 	}
 
-	if (!ItemTag.IsValid())
+	if (!ensureMsgf(ItemTag.IsValid(),
+	                TEXT("%s: ValidateUseStart failed because ItemTag was invalid for item type %s."),
+	                *GetNameSafe(this), *GetItemTypeName(ItemType)))
 	{
-		LOGE(TEXT("%s: ValidateUseStart failed because ItemTag was invalid for item type %s."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(ItemType));
 		OutFailReason = EBGInventoryFailReason::InvalidItem;
 		return false;
 	}
 
-	if (!CachedInventory || !CachedHealth || !CachedCharacter)
-	{
-		LOGE(TEXT("%s: ValidateUseStart failed. Character=%s, Inventory=%s, Health=%s."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(CachedCharacter),
-		     *GetNameSafe(CachedInventory),
-		     *GetNameSafe(CachedHealth));
+	if (!ensureMsgf(CachedInventory && CachedHealth && CachedCharacter,
+	                TEXT("%s: ValidateUseStart failed. Character=%s, Inventory=%s, Health=%s."),
+	                *GetNameSafe(this), *GetNameSafe(CachedCharacter), *GetNameSafe(CachedInventory),
+	                *GetNameSafe(CachedHealth)))
 		return false;
-	}
 
-	if (CachedHealth->IsDead() || CachedCharacter->GetCharacterState() == EBGCharacterState::Dead)
-	{
-		LOGE(TEXT("%s: ValidateUseStart failed because owner character is dead."), *GetNameSafe(this));
+	if (!ensureMsgf(!CachedHealth->IsDead() && CachedCharacter->GetCharacterState() != EBGCharacterState::Dead,
+	                TEXT("%s: ValidateUseStart failed because owner character is dead."), *GetNameSafe(this)))
 		return false;
-	}
 
-	if (CachedInventory->GetQuantity(ItemType, ItemTag) <= 0)
+	if (!ensureMsgf(CachedInventory->GetQuantity(ItemType, ItemTag) > 0,
+	                TEXT("%s: ValidateUseStart failed because inventory has no %s %s."),
+	                *GetNameSafe(this), *GetItemTypeName(ItemType), *ItemTag.ToString()))
 	{
-		LOGE(TEXT("%s: ValidateUseStart failed because inventory has no %s %s."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(ItemType),
-		     *ItemTag.ToString());
 		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
 		return false;
 	}
@@ -430,9 +375,7 @@ bool UBG_ItemUseComponent::ValidateUseStart(
 	{
 		const FBG_HealItemDataRow* HealRow = nullptr;
 		if (!ValidateHealUseStart(ItemTag, HealRow, OutFailReason))
-		{
 			return false;
-		}
 
 		OutUseDuration = HealRow->UseDuration;
 		return true;
@@ -440,9 +383,7 @@ bool UBG_ItemUseComponent::ValidateUseStart(
 
 	const FBG_BoostItemDataRow* BoostRow = nullptr;
 	if (!ValidateBoostUseStart(ItemTag, BoostRow, OutFailReason))
-	{
 		return false;
-	}
 
 	OutUseDuration = BoostRow->UseDuration;
 	return true;
@@ -460,43 +401,38 @@ bool UBG_ItemUseComponent::ValidateHealUseStart(
 		return false;
 	}
 
-	if (OutHealRow->HealAmount <= 0.f || OutHealRow->HealCap <= 0.f || OutHealRow->UseDuration < 0.f)
+	if (!ensureMsgf(
+		OutHealRow->HealAmount > 0.f && OutHealRow->HealCap > 0.f && OutHealRow->UseDuration >= 0.f,
+		TEXT(
+			"%s: ValidateHealUseStart failed because heal row %s had invalid values. HealAmount=%.2f, HealCap=%.2f, UseDuration=%.2f."
+		),
+		*GetNameSafe(this), *ItemTag.ToString(), OutHealRow->HealAmount, OutHealRow->HealCap,
+		OutHealRow->UseDuration))
 	{
-		LOGE(TEXT("%s: ValidateHealUseStart failed because heal row %s had invalid values. HealAmount=%.2f, HealCap=%.2f, UseDuration=%.2f."),
-		     *GetNameSafe(this),
-		     *ItemTag.ToString(),
-		     OutHealRow->HealAmount,
-		     OutHealRow->HealCap,
-		     OutHealRow->UseDuration);
 		OutFailReason = EBGInventoryFailReason::InvalidItem;
 		return false;
 	}
 
-	if (!CachedHealth)
+	if (!ensureMsgf(CachedHealth, TEXT("%s: ValidateHealUseStart failed because CachedHealth was null."),
+	                *GetNameSafe(this)))
 	{
-		LOGE(TEXT("%s: ValidateHealUseStart failed because CachedHealth was null."), *GetNameSafe(this));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
 
 	const float EffectiveHealCap = FMath::Min(OutHealRow->HealCap, CachedHealth->GetMaxHP());
-	if (EffectiveHealCap <= 0.f)
+	if (!ensureMsgf(EffectiveHealCap > 0.f,
+	                TEXT("%s: ValidateHealUseStart failed because heal row %s resolved to invalid cap %.2f."),
+	                *GetNameSafe(this), *ItemTag.ToString(), EffectiveHealCap))
 	{
-		LOGE(TEXT("%s: ValidateHealUseStart failed because heal row %s resolved to invalid cap %.2f."),
-		     *GetNameSafe(this),
-		     *ItemTag.ToString(),
-		     EffectiveHealCap);
 		OutFailReason = EBGInventoryFailReason::InvalidItem;
 		return false;
 	}
 
-	if (CachedHealth->GetCurrentHP() >= EffectiveHealCap - KINDA_SMALL_NUMBER)
+	if (!ensureMsgf(CachedHealth->GetCurrentHP() < EffectiveHealCap - KINDA_SMALL_NUMBER,
+	                TEXT("%s: ValidateHealUseStart rejected %s because CurrentHP %.2f is at or above HealCap %.2f."),
+	                *GetNameSafe(this), *ItemTag.ToString(), CachedHealth->GetCurrentHP(), EffectiveHealCap))
 	{
-		LOGE(TEXT("%s: ValidateHealUseStart rejected %s because CurrentHP %.2f is at or above HealCap %.2f."),
-		     *GetNameSafe(this),
-		     *ItemTag.ToString(),
-		     CachedHealth->GetCurrentHP(),
-		     EffectiveHealCap);
 		OutFailReason = EBGInventoryFailReason::HealthCapReached;
 		return false;
 	}
@@ -516,40 +452,37 @@ bool UBG_ItemUseComponent::ValidateBoostUseStart(
 		return false;
 	}
 
-	if (OutBoostRow->BoostAmount <= 0.f || OutBoostRow->UseDuration < 0.f)
+	if (!ensureMsgf(
+		OutBoostRow->BoostAmount > 0.f && OutBoostRow->UseDuration >= 0.f,
+		TEXT(
+			"%s: ValidateBoostUseStart failed because boost row %s had invalid values. BoostAmount=%.2f, UseDuration=%.2f."
+		),
+		*GetNameSafe(this), *ItemTag.ToString(), OutBoostRow->BoostAmount, OutBoostRow->UseDuration))
 	{
-		LOGE(TEXT("%s: ValidateBoostUseStart failed because boost row %s had invalid values. BoostAmount=%.2f, UseDuration=%.2f."),
-		     *GetNameSafe(this),
-		     *ItemTag.ToString(),
-		     OutBoostRow->BoostAmount,
-		     OutBoostRow->UseDuration);
 		OutFailReason = EBGInventoryFailReason::InvalidItem;
 		return false;
 	}
 
-	if (!CachedHealth)
+	if (!ensureMsgf(CachedHealth, TEXT("%s: ValidateBoostUseStart failed because CachedHealth was null."),
+	                *GetNameSafe(this)))
 	{
-		LOGE(TEXT("%s: ValidateBoostUseStart failed because CachedHealth was null."), *GetNameSafe(this));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
 
-	if (CachedHealth->GetMaxBoostGauge() <= 0.f)
+	if (!ensureMsgf(CachedHealth->GetMaxBoostGauge() > 0.f,
+	                TEXT("%s: ValidateBoostUseStart failed because MaxBoostGauge %.2f was invalid."),
+	                *GetNameSafe(this), CachedHealth->GetMaxBoostGauge()))
 	{
-		LOGE(TEXT("%s: ValidateBoostUseStart failed because MaxBoostGauge %.2f was invalid."),
-		     *GetNameSafe(this),
-		     CachedHealth->GetMaxBoostGauge());
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
 
-	if (CachedHealth->GetBoostGauge() >= CachedHealth->GetMaxBoostGauge() - KINDA_SMALL_NUMBER)
+	if (!ensureMsgf(CachedHealth->GetBoostGauge() < CachedHealth->GetMaxBoostGauge() - KINDA_SMALL_NUMBER,
+	                TEXT("%s: ValidateBoostUseStart rejected %s because BoostGauge %.2f is at max %.2f."),
+	                *GetNameSafe(this), *ItemTag.ToString(), CachedHealth->GetBoostGauge(),
+	                CachedHealth->GetMaxBoostGauge()))
 	{
-		LOGE(TEXT("%s: ValidateBoostUseStart rejected %s because BoostGauge %.2f is at max %.2f."),
-		     *GetNameSafe(this),
-		     *ItemTag.ToString(),
-		     CachedHealth->GetBoostGauge(),
-		     CachedHealth->GetMaxBoostGauge());
 		OutFailReason = EBGInventoryFailReason::HealthCapReached;
 		return false;
 	}
@@ -561,26 +494,17 @@ UBG_ItemDataRegistrySubsystem* UBG_ItemUseComponent::GetItemDataRegistrySubsyste
 	const TCHAR* OperationName) const
 {
 	const UWorld* World = GetWorld();
-	if (!World)
-	{
-		LOGE(TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(World, TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName))
 		return nullptr;
-	}
 
 	UGameInstance* GameInstance = World->GetGameInstance();
-	if (!GameInstance)
-	{
-		LOGE(TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(GameInstance, TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this),
+	                OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GameInstance->GetSubsystem<UBG_ItemDataRegistrySubsystem>();
-	if (!RegistrySubsystem)
-	{
-		LOGE(TEXT("%s: %s failed because UBG_ItemDataRegistrySubsystem was null."),
-		     *GetNameSafe(this),
-		     OperationName);
-	}
+	ensureMsgf(RegistrySubsystem, TEXT("%s: %s failed because UBG_ItemDataRegistrySubsystem was null."),
+	           *GetNameSafe(this), OperationName);
 
 	return RegistrySubsystem;
 }
@@ -589,32 +513,28 @@ const FBG_HealItemDataRow* UBG_ItemUseComponent::FindHealItemRow(
 	const FGameplayTag& ItemTag,
 	const TCHAR* OperationName) const
 {
-	if (!ItemTag.IsValid())
-	{
-		LOGE(TEXT("%s: %s failed because heal ItemTag was invalid."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(ItemTag.IsValid(), TEXT("%s: %s failed because heal ItemTag was invalid."), *GetNameSafe(this),
+	                OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GetItemDataRegistrySubsystem(OperationName);
 	return RegistrySubsystem
-		? RegistrySubsystem->FindTypedItemRow<FBG_HealItemDataRow>(EBG_ItemType::Heal, ItemTag)
-		: nullptr;
+		       ? RegistrySubsystem->FindTypedItemRow<FBG_HealItemDataRow>(EBG_ItemType::Heal, ItemTag)
+		       : nullptr;
 }
 
 const FBG_BoostItemDataRow* UBG_ItemUseComponent::FindBoostItemRow(
 	const FGameplayTag& ItemTag,
 	const TCHAR* OperationName) const
 {
-	if (!ItemTag.IsValid())
-	{
-		LOGE(TEXT("%s: %s failed because boost ItemTag was invalid."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(ItemTag.IsValid(), TEXT("%s: %s failed because boost ItemTag was invalid."), *GetNameSafe(this),
+	                OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GetItemDataRegistrySubsystem(OperationName);
 	return RegistrySubsystem
-		? RegistrySubsystem->FindTypedItemRow<FBG_BoostItemDataRow>(EBG_ItemType::Boost, ItemTag)
-		: nullptr;
+		       ? RegistrySubsystem->FindTypedItemRow<FBG_BoostItemDataRow>(EBG_ItemType::Boost, ItemTag)
+		       : nullptr;
 }
 
 void UBG_ItemUseComponent::BeginItemUse(
@@ -623,11 +543,8 @@ void UBG_ItemUseComponent::BeginItemUse(
 	float UseDuration)
 {
 	UWorld* World = GetWorld();
-	if (!World)
-	{
-		LOGE(TEXT("%s: BeginItemUse failed because World was null."), *GetNameSafe(this));
+	if (!ensureMsgf(World, TEXT("%s: BeginItemUse failed because World was null."), *GetNameSafe(this)))
 		return;
-	}
 
 	SetItemUseState(ItemType, ItemTag, UseDuration);
 
@@ -648,14 +565,10 @@ void UBG_ItemUseComponent::BeginItemUse(
 void UBG_ItemUseComponent::CompleteActiveItemUse()
 {
 	if (!CanMutateItemUseState(TEXT("CompleteActiveItemUse")))
-	{
 		return;
-	}
 
 	if (!ItemUseState.bIsUsingItem)
-	{
 		return;
-	}
 
 	const FBG_ItemUseRepState CompletedUseState = ItemUseState;
 	ClearItemUseTimer();
@@ -678,30 +591,28 @@ bool UBG_ItemUseComponent::ApplyCompletedItemUse(
 {
 	OutFailReason = EBGInventoryFailReason::ServerRejected;
 
-	if (!CompletedUseState.IsValidUse())
+	if (!ensureMsgf(
+		CompletedUseState.IsValidUse(),
+		TEXT("%s: ApplyCompletedItemUse failed because completed use state was invalid. ItemType=%s, ItemTag=%s."),
+		*GetNameSafe(this), *GetItemTypeName(CompletedUseState.ItemType),
+		*CompletedUseState.ItemTag.ToString()))
 	{
-		LOGE(TEXT("%s: ApplyCompletedItemUse failed because completed use state was invalid. ItemType=%s, ItemTag=%s."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(CompletedUseState.ItemType),
-		     *CompletedUseState.ItemTag.ToString());
 		OutFailReason = EBGInventoryFailReason::InvalidItem;
 		return false;
 	}
 
-	if (!CachedInventory || !CachedHealth || !CachedCharacter)
+	if (!ensureMsgf(CachedInventory && CachedHealth && CachedCharacter,
+	                TEXT("%s: ApplyCompletedItemUse failed. Character=%s, Inventory=%s, Health=%s."),
+	                *GetNameSafe(this), *GetNameSafe(CachedCharacter), *GetNameSafe(CachedInventory),
+	                *GetNameSafe(CachedHealth)))
 	{
-		LOGE(TEXT("%s: ApplyCompletedItemUse failed. Character=%s, Inventory=%s, Health=%s."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(CachedCharacter),
-		     *GetNameSafe(CachedInventory),
-		     *GetNameSafe(CachedHealth));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
 
-	if (CachedHealth->IsDead() || CachedCharacter->GetCharacterState() == EBGCharacterState::Dead)
+	if (!ensureMsgf(!CachedHealth->IsDead() && CachedCharacter->GetCharacterState() != EBGCharacterState::Dead,
+	                TEXT("%s: ApplyCompletedItemUse failed because owner character is dead."), *GetNameSafe(this)))
 	{
-		LOGE(TEXT("%s: ApplyCompletedItemUse failed because owner character is dead."), *GetNameSafe(this));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
@@ -726,40 +637,32 @@ bool UBG_ItemUseComponent::ApplyCompletedHealUse(
 {
 	const FBG_HealItemDataRow* HealRow = nullptr;
 	if (!ValidateHealUseStart(ItemTag, HealRow, OutFailReason))
-	{
 		return false;
-	}
 
-	if (!CachedInventory || !CachedHealth)
+	if (!ensureMsgf(CachedInventory && CachedHealth,
+	                TEXT("%s: ApplyCompletedHealUse failed. Inventory=%s, Health=%s."),
+	                *GetNameSafe(this), *GetNameSafe(CachedInventory), *GetNameSafe(CachedHealth)))
 	{
-		LOGE(TEXT("%s: ApplyCompletedHealUse failed. Inventory=%s, Health=%s."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(CachedInventory),
-		     *GetNameSafe(CachedHealth));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
 
 	int32 RemovedQuantity = 0;
-	if (!CachedInventory->TryRemoveItem(EBG_ItemType::Heal, ItemTag, 1, RemovedQuantity)
-		|| RemovedQuantity != 1)
+	if (!ensureMsgf(
+		CachedInventory->TryRemoveItem(EBG_ItemType::Heal, ItemTag, 1, RemovedQuantity) && RemovedQuantity == 1,
+		TEXT("%s: ApplyCompletedHealUse failed because TryRemoveItem removed %d instead of 1 for %s."),
+		*GetNameSafe(this), RemovedQuantity, *ItemTag.ToString()))
 	{
-		LOGE(TEXT("%s: ApplyCompletedHealUse failed because TryRemoveItem removed %d instead of 1 for %s."),
-		     *GetNameSafe(this),
-		     RemovedQuantity,
-		     *ItemTag.ToString());
 		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
 		return false;
 	}
 
-	if (!CachedHealth->ApplyHeal(HealRow->HealAmount, HealRow->HealCap))
+	if (!ensureMsgf(CachedHealth->ApplyHeal(HealRow->HealAmount, HealRow->HealCap),
+	                TEXT("%s: ApplyCompletedHealUse failed because ApplyHeal failed for %s."),
+	                *GetNameSafe(this), *ItemTag.ToString()))
 	{
 		int32 RollbackAddedQuantity = 0;
 		CachedInventory->TryAddItem(EBG_ItemType::Heal, ItemTag, RemovedQuantity, RollbackAddedQuantity);
-		LOGE(TEXT("%s: ApplyCompletedHealUse failed because ApplyHeal failed for %s. RollbackAdded=%d."),
-		     *GetNameSafe(this),
-		     *ItemTag.ToString(),
-		     RollbackAddedQuantity);
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
@@ -774,40 +677,32 @@ bool UBG_ItemUseComponent::ApplyCompletedBoostUse(
 {
 	const FBG_BoostItemDataRow* BoostRow = nullptr;
 	if (!ValidateBoostUseStart(ItemTag, BoostRow, OutFailReason))
-	{
 		return false;
-	}
 
-	if (!CachedInventory || !CachedHealth)
+	if (!ensureMsgf(CachedInventory && CachedHealth,
+	                TEXT("%s: ApplyCompletedBoostUse failed. Inventory=%s, Health=%s."),
+	                *GetNameSafe(this), *GetNameSafe(CachedInventory), *GetNameSafe(CachedHealth)))
 	{
-		LOGE(TEXT("%s: ApplyCompletedBoostUse failed. Inventory=%s, Health=%s."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(CachedInventory),
-		     *GetNameSafe(CachedHealth));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
 
 	int32 RemovedQuantity = 0;
-	if (!CachedInventory->TryRemoveItem(EBG_ItemType::Boost, ItemTag, 1, RemovedQuantity)
-		|| RemovedQuantity != 1)
+	if (!ensureMsgf(
+		CachedInventory->TryRemoveItem(EBG_ItemType::Boost, ItemTag, 1, RemovedQuantity) && RemovedQuantity == 1,
+		TEXT("%s: ApplyCompletedBoostUse failed because TryRemoveItem removed %d instead of 1 for %s."),
+		*GetNameSafe(this), RemovedQuantity, *ItemTag.ToString()))
 	{
-		LOGE(TEXT("%s: ApplyCompletedBoostUse failed because TryRemoveItem removed %d instead of 1 for %s."),
-		     *GetNameSafe(this),
-		     RemovedQuantity,
-		     *ItemTag.ToString());
 		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
 		return false;
 	}
 
-	if (!CachedHealth->AddBoost(BoostRow->BoostAmount))
+	if (!ensureMsgf(CachedHealth->AddBoost(BoostRow->BoostAmount),
+	                TEXT("%s: ApplyCompletedBoostUse failed because AddBoost failed for %s."),
+	                *GetNameSafe(this), *ItemTag.ToString()))
 	{
 		int32 RollbackAddedQuantity = 0;
 		CachedInventory->TryAddItem(EBG_ItemType::Boost, ItemTag, RemovedQuantity, RollbackAddedQuantity);
-		LOGE(TEXT("%s: ApplyCompletedBoostUse failed because AddBoost failed for %s. RollbackAdded=%d."),
-		     *GetNameSafe(this),
-		     *ItemTag.ToString(),
-		     RollbackAddedQuantity);
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
@@ -819,14 +714,10 @@ bool UBG_ItemUseComponent::ApplyCompletedBoostUse(
 bool UBG_ItemUseComponent::CancelActiveItemUse(const TCHAR* CancelReason)
 {
 	if (!CanMutateItemUseState(TEXT("CancelActiveItemUse")))
-	{
 		return false;
-	}
 
 	if (!ItemUseState.bIsUsingItem)
-	{
 		return false;
-	}
 
 	LOGD(TEXT("%s: Canceled item use. Reason=%s, ItemType=%s, ItemTag=%s."),
 	     *GetNameSafe(this),
@@ -881,10 +772,8 @@ void UBG_ItemUseComponent::ClearItemUseTimer()
 		return;
 	}
 
-	if (ItemUseTimerHandle.IsValid())
-	{
-		LOGE(TEXT("%s: ClearItemUseTimer could not clear timer because World was null."), *GetNameSafe(this));
-	}
+	ensureMsgf(!ItemUseTimerHandle.IsValid(),
+	           TEXT("%s: ClearItemUseTimer could not clear timer because World was null."), *GetNameSafe(this));
 }
 
 void UBG_ItemUseComponent::RefreshProgressTickEnabled()
@@ -903,13 +792,10 @@ void UBG_ItemUseComponent::NotifyItemUseFailure(
 		OwnerCharacter = Cast<ABG_Character>(GetOwner());
 	}
 
-	if (!OwnerCharacter)
-	{
-		LOGE(TEXT("%s: NotifyItemUseFailure failed because owner was not ABG_Character. FailReason=%d"),
-		     *GetNameSafe(this),
-		     static_cast<int32>(FailReason));
+	if (!ensureMsgf(OwnerCharacter,
+	                TEXT("%s: NotifyItemUseFailure failed because owner was not ABG_Character. FailReason=%d"),
+	                *GetNameSafe(this), static_cast<int32>(FailReason)))
 		return;
-	}
 
 	OwnerCharacter->Client_ReceiveInventoryFailure(FailReason, ItemType, ItemTag);
 }
@@ -917,11 +803,8 @@ void UBG_ItemUseComponent::NotifyItemUseFailure(
 float UBG_ItemUseComponent::GetServerWorldTimeSeconds() const
 {
 	const UWorld* World = GetWorld();
-	if (!World)
-	{
-		LOGE(TEXT("%s: GetServerWorldTimeSeconds failed because World was null."), *GetNameSafe(this));
+	if (!ensureMsgf(World, TEXT("%s: GetServerWorldTimeSeconds failed because World was null."), *GetNameSafe(this)))
 		return 0.f;
-	}
 
 	if (const AGameStateBase* GameState = World->GetGameState())
 	{
@@ -941,8 +824,8 @@ void UBG_ItemUseComponent::BroadcastItemUseProgress()
 	const float Progress = GetItemUseProgress();
 	const float RemainingTime = GetRemainingUseTime();
 	const float ElapsedTime = ItemUseState.bIsUsingItem
-		? FMath::Max(0.f, ItemUseState.UseDuration - RemainingTime)
-		: 0.f;
+		                          ? FMath::Max(0.f, ItemUseState.UseDuration - RemainingTime)
+		                          : 0.f;
 	OnItemUseProgressChanged.Broadcast(Progress, ElapsedTime, RemainingTime);
 }
 

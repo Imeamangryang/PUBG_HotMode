@@ -91,6 +91,18 @@ public:
 	bool IsInventoryUIOpen() const;
 
 	void NotifyInventoryFailure(EBGInventoryFailReason FailReason, EBG_ItemType ItemType, FGameplayTag ItemTag);
+	
+	UFUNCTION(BlueprintCallable, Category = "Battle UI")
+	void ShowBattleWaitingTimeUI();
+
+	UFUNCTION(BlueprintCallable, Category = "Battle UI")
+	void HideBattleWaitingTimeUI();
+	
+	UFUNCTION(BlueprintPure, Category = "Battle UI")
+	UUserWidget* GetBattleWaitingTimeWidget() const { return BattleWaitingTimeWidget; }
+	
+	UFUNCTION(Client, Reliable)
+	void Client_HideBattleWaitingTimeUI();
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
@@ -162,4 +174,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> InventoryWidget = nullptr;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Battle UI", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UUserWidget> BattleWaitingTimeWidgetClass = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> BattleWaitingTimeWidget = nullptr;
 };

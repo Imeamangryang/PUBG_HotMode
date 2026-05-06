@@ -57,24 +57,18 @@ int32 FBG_InventoryList::AddQuantity(
 {
 	// Guard: no stack mutation for invalid request data
 	if (Quantity <= 0 || MaxStackSize <= 0)
-	{
 		return 0;
-	}
 
 	// Existing stacks first: preserve stack order and fill partial stacks before creating new entries
 	int32 RemainingQuantity = Quantity;
 	for (FBG_InventoryEntry& Entry : Entries)
 	{
 		if (RemainingQuantity <= 0)
-		{
 			break;
-		}
 
 		// Different item or already-full stack
 		if (!Entry.Matches(ItemType, ItemTag) || Entry.Quantity >= MaxStackSize)
-		{
 			continue;
-		}
 
 		// Stack fill: merge as much as this stack can accept
 		const int32 StackCapacity = MaxStackSize - Entry.Quantity;
@@ -101,18 +95,14 @@ int32 FBG_InventoryList::AddQuantity(
 int32 FBG_InventoryList::RemoveQuantity(EBG_ItemType ItemType, const FGameplayTag& ItemTag, int32 Quantity)
 {
 	if (Quantity <= 0)
-	{
 		return 0;
-	}
 
 	int32 RemainingQuantity = Quantity;
 	for (int32 EntryIndex = Entries.Num() - 1; EntryIndex >= 0 && RemainingQuantity > 0; --EntryIndex)
 	{
 		FBG_InventoryEntry& Entry = Entries[EntryIndex];
 		if (!Entry.Matches(ItemType, ItemTag))
-		{
 			continue;
-		}
 
 		const int32 QuantityToRemove = FMath::Min(Entry.Quantity, RemainingQuantity);
 		Entry.Quantity -= QuantityToRemove;
@@ -144,9 +134,7 @@ FBG_InventoryEntry& FBG_InventoryList::AddEntry(EBG_ItemType ItemType, const FGa
 void FBG_InventoryList::RemoveEntryAt(int32 EntryIndex)
 {
 	if (!Entries.IsValidIndex(EntryIndex))
-	{
 		return;
-	}
 
 	Entries.RemoveAt(EntryIndex);
 	MarkArrayDirty();

@@ -21,19 +21,20 @@ ABG_WorldItemBase::ABG_WorldItemBase()
 
 	WorldMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WorldMesh"));
 	SetRootComponent(WorldMeshComponent);
+	WorldMeshComponent->SetMobility(EComponentMobility::Movable);
 	WorldMeshComponent->SetCollisionProfileName(TEXT("Weapon"));
 	WorldMeshComponent->SetGenerateOverlapEvents(true);
+	WorldMeshComponent->SetSimulatePhysics(true);
 }
 
 void ABG_WorldItemBase::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (HasAuthority() && Quantity <= 0)
+	if (HasAuthority() && !ensureMsgf(Quantity > 0,
+	                                  TEXT("%s: BeginPlay found invalid Quantity %d. Destroying world item."),
+	                                  *GetNameSafe(this), Quantity))
 	{
-		LOGE(TEXT("%s: BeginPlay found invalid Quantity %d. Destroying world item."),
-		     *GetNameSafe(this),
-		     Quantity);
 		Destroy();
 		return;
 	}
@@ -60,32 +61,20 @@ ABG_WorldItemBase* ABG_WorldItemBase::SpawnDroppedWorldItem(
 	int32 Quantity,
 	int32 LoadedAmmo)
 {
-	if (!World)
-	{
-		LOGE(TEXT("SpawnDroppedWorldItem failed because World was null."));
+	if (!ensureMsgf(World, TEXT("SpawnDroppedWorldItem failed because World was null.")))
 		return nullptr;
-	}
 
-	if (ItemType == EBG_ItemType::None || !ItemTag.IsValid())
-	{
-		LOGE(TEXT("SpawnDroppedWorldItem failed because item identity was invalid. ItemType=%s, ItemTag=%s."),
-		     *GetItemTypeName(ItemType),
-		     *ItemTag.ToString());
+	if (!ensureMsgf(ItemType != EBG_ItemType::None && ItemTag.IsValid(),
+	                TEXT("SpawnDroppedWorldItem failed because item identity was invalid. ItemType=%s, ItemTag=%s."),
+	                *GetItemTypeName(ItemType), *ItemTag.ToString()))
 		return nullptr;
-	}
 
-	if (Quantity <= 0)
-	{
-		LOGE(TEXT("SpawnDroppedWorldItem failed because Quantity %d was not positive."), Quantity);
+	if (!ensureMsgf(Quantity > 0, TEXT("SpawnDroppedWorldItem failed because Quantity %d was not positive."), Quantity))
 		return nullptr;
-	}
 
 	UClass* SpawnClass = ResolveWorldItemClass(World, WorldItemClass, ItemType, ItemTag);
-	if (!SpawnClass)
-	{
-		LOGE(TEXT("SpawnDroppedWorldItem failed because SpawnClass was null."));
+	if (!ensureMsgf(SpawnClass, TEXT("SpawnDroppedWorldItem failed because SpawnClass was null.")))
 		return nullptr;
-	}
 
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
@@ -94,13 +83,9 @@ ABG_WorldItemBase* ABG_WorldItemBase::SpawnDroppedWorldItem(
 		SpawnClass,
 		SpawnTransform,
 		SpawnParameters);
-	if (!WorldItem)
-	{
-		LOGE(TEXT("SpawnDroppedWorldItem failed because SpawnActor returned null for %s %s."),
-		     *GetItemTypeName(ItemType),
-		     *ItemTag.ToString());
+	if (!ensureMsgf(WorldItem, TEXT("SpawnDroppedWorldItem failed because SpawnActor returned null for %s %s."),
+	                *GetItemTypeName(ItemType), *ItemTag.ToString()))
 		return nullptr;
-	}
 
 	WorldItem->InitializeWorldItem(ItemType, ItemTag, Quantity, LoadedAmmo);
 	return WorldItem;
@@ -113,48 +98,32 @@ UClass* ABG_WorldItemBase::ResolveWorldItemClass(
 	const FGameplayTag& ItemTag)
 {
 	UClass* FallbackClass = FallbackWorldItemClass ? FallbackWorldItemClass.Get() : ABG_WorldItemBase::StaticClass();
-	if (!FallbackClass)
-	{
-		LOGE(TEXT("ResolveWorldItemClass failed because fallback class was null for %s %s."),
-		     *GetItemTypeName(ItemType),
-		     *ItemTag.ToString());
+	if (!ensureMsgf(FallbackClass, TEXT("ResolveWorldItemClass failed because fallback class was null for %s %s."),
+	                *GetItemTypeName(ItemType), *ItemTag.ToString()))
 		return nullptr;
-	}
 
-	if (!FallbackClass->IsChildOf(ABG_WorldItemBase::StaticClass()))
-	{
-		LOGE(TEXT("ResolveWorldItemClass found invalid fallback class %s for %s %s. Using ABG_WorldItemBase."),
-		     *GetNameSafe(FallbackClass),
-		     *GetItemTypeName(ItemType),
-		     *ItemTag.ToString());
+	if (!ensureMsgf(FallbackClass->IsChildOf(ABG_WorldItemBase::StaticClass()),
+	                TEXT("ResolveWorldItemClass found invalid fallback class %s for %s %s. Using ABG_WorldItemBase."),
+	                *GetNameSafe(FallbackClass), *GetItemTypeName(ItemType), *ItemTag.ToString()))
 		FallbackClass = ABG_WorldItemBase::StaticClass();
-	}
 
 	const FBG_ItemDataRow* ItemRow = FindWorldItemRow(World, ItemType, ItemTag, TEXT("ResolveWorldItemClass"));
 	if (!ItemRow || ItemRow->WorldItemClass.IsNull())
-	{
 		return FallbackClass;
-	}
 
 	UClass* RowWorldItemClass = ItemRow->WorldItemClass.LoadSynchronous();
-	if (!RowWorldItemClass)
-	{
-		LOGE(TEXT("ResolveWorldItemClass failed to load row world item class %s for %s %s. Using fallback %s."),
-		     *ItemRow->WorldItemClass.ToSoftObjectPath().ToString(),
-		     *GetItemTypeName(ItemType),
-		     *ItemTag.ToString(),
-		     *GetNameSafe(FallbackClass));
+	if (!ensureMsgf(RowWorldItemClass,
+	                TEXT("ResolveWorldItemClass failed to load row world item class %s for %s %s. Using fallback %s."),
+	                *ItemRow->WorldItemClass.ToSoftObjectPath().ToString(),
+	                *GetItemTypeName(ItemType), *ItemTag.ToString(), *GetNameSafe(FallbackClass)))
 		return FallbackClass;
-	}
 
-	if (!RowWorldItemClass->IsChildOf(ABG_WorldItemBase::StaticClass()))
-	{
-		LOGE(TEXT("ResolveWorldItemClass rejected %s because it is not a child of ABG_WorldItemBase. Using fallback %s."
-		     ),
-		     *GetNameSafe(RowWorldItemClass),
-		     *GetNameSafe(FallbackClass));
+	if (!ensureMsgf(RowWorldItemClass->IsChildOf(ABG_WorldItemBase::StaticClass()),
+	                TEXT(
+		                "ResolveWorldItemClass rejected %s because it is not a child of ABG_WorldItemBase. Using fallback %s."
+	                ),
+	                *GetNameSafe(RowWorldItemClass), *GetNameSafe(FallbackClass)))
 		return FallbackClass;
-	}
 
 	return RowWorldItemClass;
 }
@@ -165,25 +134,17 @@ const FBG_ItemDataRow* ABG_WorldItemBase::FindWorldItemRow(
 	const FGameplayTag& ItemTag,
 	const TCHAR* OperationName)
 {
-	if (!World)
-	{
-		LOGE(TEXT("%s failed because World was null."), OperationName);
+	if (!ensureMsgf(World, TEXT("%s failed because World was null."), OperationName))
 		return nullptr;
-	}
 
 	UGameInstance* GameInstance = World->GetGameInstance();
-	if (!GameInstance)
-	{
-		LOGE(TEXT("%s failed because GameInstance was null."), OperationName);
+	if (!ensureMsgf(GameInstance, TEXT("%s failed because GameInstance was null."), OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GameInstance->GetSubsystem<UBG_ItemDataRegistrySubsystem>();
-	if (!RegistrySubsystem)
-	{
-		LOGE(TEXT("%s failed because UBG_ItemDataRegistrySubsystem was null."), OperationName);
+	if (!ensureMsgf(RegistrySubsystem, TEXT("%s failed because UBG_ItemDataRegistrySubsystem was null."),
+	                OperationName))
 		return nullptr;
-	}
 
 	return RegistrySubsystem->FindItemRow(ItemType, ItemTag);
 }
@@ -194,28 +155,18 @@ void ABG_WorldItemBase::InitializeWorldItem(
 	int32 NewQuantity,
 	int32 NewWeaponLoadedAmmo)
 {
-	if (!HasAuthority())
-	{
-		LOGE(TEXT("%s: InitializeWorldItem failed because actor had no authority."), *GetNameSafe(this));
+	if (!ensureMsgf(HasAuthority(), TEXT("%s: InitializeWorldItem failed because actor had no authority."),
+	                *GetNameSafe(this)))
 		return;
-	}
 
-	if (NewItemType == EBG_ItemType::None || !NewItemTag.IsValid())
-	{
-		LOGE(TEXT("%s: InitializeWorldItem failed because item identity was invalid. ItemType=%s, ItemTag=%s."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(NewItemType),
-		     *NewItemTag.ToString());
+	if (!ensureMsgf(NewItemType != EBG_ItemType::None && NewItemTag.IsValid(),
+	                TEXT("%s: InitializeWorldItem failed because item identity was invalid. ItemType=%s, ItemTag=%s."),
+	                *GetNameSafe(this), *GetItemTypeName(NewItemType), *NewItemTag.ToString()))
 		return;
-	}
 
-	if (NewQuantity <= 0)
-	{
-		LOGE(TEXT("%s: InitializeWorldItem failed because Quantity %d was not positive."),
-		     *GetNameSafe(this),
-		     NewQuantity);
+	if (!ensureMsgf(NewQuantity > 0, TEXT("%s: InitializeWorldItem failed because Quantity %d was not positive."),
+	                *GetNameSafe(this), NewQuantity))
 		return;
-	}
 
 	ItemType = NewItemType;
 	ItemTag = NewItemTag;
@@ -235,9 +186,7 @@ bool ABG_WorldItemBase::TryPickup(
 
 	int32 PickupQuantity = 0;
 	if (!ValidatePickupRequest(RequestingCharacter, RequestedQuantity, PickupQuantity, OutFailReason))
-	{
 		return false;
-	}
 
 	switch (ItemType)
 	{
@@ -253,9 +202,8 @@ bool ABG_WorldItemBase::TryPickup(
 	case EBG_ItemType::Backpack:
 		return TryPickupBackpack(RequestingCharacter, PickupQuantity, OutFailReason);
 	default:
-		LOGE(TEXT("%s: TryPickup failed because item type %s is unsupported."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(ItemType));
+		ensureMsgf(false, TEXT("%s: TryPickup failed because item type %s is unsupported."),
+		           *GetNameSafe(this), *GetItemTypeName(ItemType));
 		OutFailReason = EBGInventoryFailReason::InvalidItem;
 		return false;
 	}
@@ -274,53 +222,49 @@ bool ABG_WorldItemBase::ValidatePickupRequest(
 {
 	OutPickupQuantity = 0;
 
-	if (!HasAuthority())
+	if (!ensureMsgf(HasAuthority(), TEXT("%s: ValidatePickupRequest failed because actor had no authority."),
+	                *GetNameSafe(this)))
 	{
-		LOGE(TEXT("%s: ValidatePickupRequest failed because actor had no authority."), *GetNameSafe(this));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
 
-	if (!IsValid(RequestingCharacter))
+	if (!ensureMsgf(IsValid(RequestingCharacter),
+	                TEXT("%s: ValidatePickupRequest failed because RequestingCharacter was invalid."),
+	                *GetNameSafe(this)))
 	{
-		LOGE(TEXT("%s: ValidatePickupRequest failed because RequestingCharacter was invalid."), *GetNameSafe(this));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
 
-	if (!RequestingCharacter->GetController())
+	if (!ensureMsgf(RequestingCharacter->GetController(),
+	                TEXT("%s: ValidatePickupRequest failed because %s had no controller."),
+	                *GetNameSafe(this), *GetNameSafe(RequestingCharacter)))
 	{
-		LOGE(TEXT("%s: ValidatePickupRequest failed because %s had no controller."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(RequestingCharacter));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
 
-	if (RequestedQuantity <= 0)
+	if (!ensureMsgf(RequestedQuantity > 0,
+	                TEXT("%s: ValidatePickupRequest failed because RequestedQuantity %d was not positive."),
+	                *GetNameSafe(this), RequestedQuantity))
 	{
-		LOGE(TEXT("%s: ValidatePickupRequest failed because RequestedQuantity %d was not positive."),
-		     *GetNameSafe(this),
-		     RequestedQuantity);
 		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
 		return false;
 	}
 
-	if (Quantity <= 0)
+	if (!ensureMsgf(Quantity > 0, TEXT("%s: ValidatePickupRequest failed because world item quantity %d was invalid."),
+	                *GetNameSafe(this), Quantity))
 	{
-		LOGE(TEXT("%s: ValidatePickupRequest failed because world item quantity %d was invalid."),
-		     *GetNameSafe(this),
-		     Quantity);
 		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
 		return false;
 	}
 
-	if (ItemType == EBG_ItemType::None || !ItemTag.IsValid())
+	if (!ensureMsgf(ItemType != EBG_ItemType::None && ItemTag.IsValid(),
+	                TEXT("%s: ValidatePickupRequest failed because item identity was invalid. ItemType=%s, ItemTag=%s."
+	                ),
+	                *GetNameSafe(this), *GetItemTypeName(ItemType), *ItemTag.ToString()))
 	{
-		LOGE(TEXT("%s: ValidatePickupRequest failed because item identity was invalid. ItemType=%s, ItemTag=%s."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(ItemType),
-		     *ItemTag.ToString());
 		OutFailReason = EBGInventoryFailReason::InvalidItem;
 		return false;
 	}
@@ -356,11 +300,9 @@ bool ABG_WorldItemBase::TryPickupStackItem(
 	}
 
 	UBG_InventoryComponent* InventoryComponent = RequestingCharacter->GetInventoryComponent();
-	if (!InventoryComponent)
+	if (!ensureMsgf(InventoryComponent, TEXT("%s: TryPickupStackItem failed because %s had no InventoryComponent."),
+	                *GetNameSafe(this), *GetNameSafe(RequestingCharacter)))
 	{
-		LOGE(TEXT("%s: TryPickupStackItem failed because %s had no InventoryComponent."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(RequestingCharacter));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
@@ -390,11 +332,9 @@ bool ABG_WorldItemBase::TryPickupWeapon(
 	}
 
 	UBG_EquipmentComponent* EquipmentComponent = RequestingCharacter->GetEquipmentComponent();
-	if (!EquipmentComponent)
+	if (!ensureMsgf(EquipmentComponent, TEXT("%s: TryPickupWeapon failed because %s had no EquipmentComponent."),
+	                *GetNameSafe(this), *GetNameSafe(RequestingCharacter)))
 	{
-		LOGE(TEXT("%s: TryPickupWeapon failed because %s had no EquipmentComponent."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(RequestingCharacter));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
@@ -424,7 +364,20 @@ bool ABG_WorldItemBase::TryPickupWeapon(
 
 	if (ReplacedWeaponItemTag.IsValid())
 	{
-		TrySpawnReplacementItem(EBG_ItemType::Weapon, ReplacedWeaponItemTag, 1, ReplacedLoadedAmmo);
+		if (!TrySpawnReplacementItem(EBG_ItemType::Weapon, ReplacedWeaponItemTag, 1, ReplacedLoadedAmmo))
+		{
+			FGameplayTag RollbackRemovedWeaponItemTag;
+			int32 RollbackRemovedLoadedAmmo = 0;
+			EquipmentComponent->TryUnequipWeapon(WeaponSlot, RollbackRemovedWeaponItemTag, RollbackRemovedLoadedAmmo);
+
+			FGameplayTag RollbackReplacedWeaponItemTag;
+			int32 RollbackReplacedLoadedAmmo = 0;
+			EquipmentComponent->TryEquipWeapon(WeaponSlot, ReplacedWeaponItemTag, ReplacedLoadedAmmo,
+			                                   RollbackReplacedWeaponItemTag, RollbackReplacedLoadedAmmo);
+
+			OutFailReason = EBGInventoryFailReason::ServerRejected;
+			return false;
+		}
 	}
 
 	ConsumePickedUpQuantity(1);
@@ -445,11 +398,9 @@ bool ABG_WorldItemBase::TryPickupArmor(
 	}
 
 	UBG_EquipmentComponent* EquipmentComponent = RequestingCharacter->GetEquipmentComponent();
-	if (!EquipmentComponent)
+	if (!ensureMsgf(EquipmentComponent, TEXT("%s: TryPickupArmor failed because %s had no EquipmentComponent."),
+	                *GetNameSafe(this), *GetNameSafe(RequestingCharacter)))
 	{
-		LOGE(TEXT("%s: TryPickupArmor failed because %s had no EquipmentComponent."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(RequestingCharacter));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
@@ -499,11 +450,9 @@ bool ABG_WorldItemBase::TryPickupBackpack(
 	}
 
 	UBG_EquipmentComponent* EquipmentComponent = RequestingCharacter->GetEquipmentComponent();
-	if (!EquipmentComponent)
+	if (!ensureMsgf(EquipmentComponent, TEXT("%s: TryPickupBackpack failed because %s had no EquipmentComponent."),
+	                *GetNameSafe(this), *GetNameSafe(RequestingCharacter)))
 	{
-		LOGE(TEXT("%s: TryPickupBackpack failed because %s had no EquipmentComponent."),
-		     *GetNameSafe(this),
-		     *GetNameSafe(RequestingCharacter));
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
 	}
@@ -549,33 +498,23 @@ bool ABG_WorldItemBase::TrySpawnReplacementItem(
 		ReplacedQuantity,
 		ReplacedLoadedAmmo);
 
-	if (!SpawnedItem)
-	{
-		LOGE(TEXT("%s: TrySpawnReplacementItem failed for replaced item %s %s."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(ReplacedItemType),
-		     *ReplacedItemTag.ToString());
+	if (!ensureMsgf(SpawnedItem, TEXT("%s: TrySpawnReplacementItem failed for replaced item %s %s."),
+	                *GetNameSafe(this), *GetItemTypeName(ReplacedItemType), *ReplacedItemTag.ToString()))
 		return false;
-	}
 
 	return true;
 }
 
 void ABG_WorldItemBase::ConsumePickedUpQuantity(int32 PickedUpQuantity)
 {
-	if (!HasAuthority())
-	{
-		LOGE(TEXT("%s: ConsumePickedUpQuantity failed because actor had no authority."), *GetNameSafe(this));
+	if (!ensureMsgf(HasAuthority(), TEXT("%s: ConsumePickedUpQuantity failed because actor had no authority."),
+	                *GetNameSafe(this)))
 		return;
-	}
 
-	if (PickedUpQuantity <= 0)
-	{
-		LOGE(TEXT("%s: ConsumePickedUpQuantity failed because PickedUpQuantity %d was not positive."),
-		     *GetNameSafe(this),
-		     PickedUpQuantity);
+	if (!ensureMsgf(PickedUpQuantity > 0,
+	                TEXT("%s: ConsumePickedUpQuantity failed because PickedUpQuantity %d was not positive."),
+	                *GetNameSafe(this), PickedUpQuantity))
 		return;
-	}
 
 	Quantity = FMath::Max(0, Quantity - PickedUpQuantity);
 	if (Quantity <= 0)
@@ -599,9 +538,7 @@ bool ABG_WorldItemBase::IsStackInventoryItemType() const
 bool ABG_WorldItemBase::IsInPickupRange(const ABG_Character* RequestingCharacter) const
 {
 	if (!IsValid(RequestingCharacter))
-	{
 		return false;
-	}
 
 	const float Range = FMath::Max(0.f, PickupInteractionRange);
 	return FVector::DistSquared(GetActorLocation(), RequestingCharacter->GetActorLocation()) <= FMath::Square(Range);
@@ -611,27 +548,18 @@ UBG_ItemDataRegistrySubsystem* ABG_WorldItemBase::GetItemDataRegistrySubsystem(
 	const TCHAR* OperationName) const
 {
 	const UWorld* World = GetWorld();
-	if (!World)
-	{
-		LOGE(TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(World, TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName))
 		return nullptr;
-	}
 
 	UGameInstance* GameInstance = World->GetGameInstance();
-	if (!GameInstance)
-	{
-		LOGE(TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this), OperationName);
+	if (!ensureMsgf(GameInstance, TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this),
+	                OperationName))
 		return nullptr;
-	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GameInstance->GetSubsystem<UBG_ItemDataRegistrySubsystem>();
-	if (!RegistrySubsystem)
-	{
-		LOGE(TEXT("%s: %s failed because UBG_ItemDataRegistrySubsystem was null."),
-		     *GetNameSafe(this),
-		     OperationName);
+	if (!ensureMsgf(RegistrySubsystem, TEXT("%s: %s failed because UBG_ItemDataRegistrySubsystem was null."),
+	                *GetNameSafe(this), OperationName))
 		return nullptr;
-	}
 
 	return RegistrySubsystem;
 }

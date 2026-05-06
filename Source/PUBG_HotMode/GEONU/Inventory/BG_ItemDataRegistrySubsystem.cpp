@@ -27,19 +27,13 @@ bool UBG_ItemDataRegistrySubsystem::LoadRegistry()
 	if (!CachedRegistry)
 	{
 		CachedRegistry = LoadRegistryFromAssetManager();
-		if (!CachedRegistry)
-		{
-			LOGE(TEXT("UBG_ItemDataRegistrySubsystem failed to load item data registry."));
+		if (!ensureMsgf(CachedRegistry, TEXT("UBG_ItemDataRegistrySubsystem failed to load item data registry.")))
 			return false;
-		}
 	}
 
-	const bool bIsValid = CachedRegistry->ValidateRegistry();
-	if (!bIsValid)
-	{
-		LOGE(TEXT("Item data registry %s loaded but validation failed."), *GetNameSafe(CachedRegistry));
+	if (!ensureMsgf(CachedRegistry->ValidateRegistry(), TEXT("Item data registry %s loaded but validation failed."),
+	                *GetNameSafe(CachedRegistry)))
 		return false;
-	}
 
 	LOGD(TEXT("Item data registry %s loaded successfully."), *GetNameSafe(CachedRegistry));
 	return true;
@@ -57,13 +51,20 @@ bool UBG_ItemDataRegistrySubsystem::IsRegistryLoaded() const
 
 bool UBG_ItemDataRegistrySubsystem::ValidateRegistry() const
 {
-	if (!CachedRegistry)
-	{
-		LOGE(TEXT("UBG_ItemDataRegistrySubsystem cannot validate because CachedRegistry is null."));
+	if (!ensureMsgf(CachedRegistry,
+	                TEXT("UBG_ItemDataRegistrySubsystem cannot validate because CachedRegistry is null.")))
 		return false;
-	}
 
 	return CachedRegistry->ValidateRegistry();
+}
+
+bool UBG_ItemDataRegistrySubsystem::ValidateWeaponFireSpecs() const
+{
+	if (!ensureMsgf(CachedRegistry,
+	                TEXT("UBG_ItemDataRegistrySubsystem cannot validate weapon fire specs because CachedRegistry is null.")))
+		return false;
+
+	return CachedRegistry->ValidateWeaponFireSpecs();
 }
 
 // --- Item Data Queries ---
@@ -87,6 +88,19 @@ const FBG_ItemDataRow* UBG_ItemDataRegistrySubsystem::FindItemRow(
 	return Registry ? Registry->FindItemRow(ItemType, ItemTag, OutFailureReason) : nullptr;
 }
 
+bool UBG_ItemDataRegistrySubsystem::HasValidWeaponFireSpecRow(FGameplayTag WeaponItemTag)
+{
+	return FindWeaponFireSpecRow(WeaponItemTag) != nullptr;
+}
+
+const FBG_WeaponFireSpecRow* UBG_ItemDataRegistrySubsystem::FindWeaponFireSpecRow(
+	const FGameplayTag& WeaponItemTag,
+	FString* OutFailureReason)
+{
+	const UBG_ItemDataRegistry* Registry = GetLoadedRegistry(OutFailureReason);
+	return Registry ? Registry->FindWeaponFireSpecRow(WeaponItemTag, OutFailureReason) : nullptr;
+}
+
 // --- Internal Helpers ---
 
 UBG_ItemDataRegistry* UBG_ItemDataRegistrySubsystem::GetLoadedRegistry(FString* OutFailureReason)
@@ -104,7 +118,6 @@ UBG_ItemDataRegistry* UBG_ItemDataRegistrySubsystem::GetLoadedRegistry(FString* 
 		{
 			*OutFailureReason = FailureReason;
 		}
-
 		// Subsystem 로드 실패는 모든 인벤토리 검증을 막으므로 조용히 지나가면 안 됨
 		LOGE(TEXT("%s"), *FailureReason);
 		return nullptr;
@@ -119,9 +132,7 @@ UBG_ItemDataRegistry* UBG_ItemDataRegistrySubsystem::LoadRegistryFromAssetManage
 
 	FPrimaryAssetId RegistryId;
 	if (!TryResolveRegistryPrimaryAssetId(RegistryId))
-	{
 		return nullptr;
-	}
 
 	if (UBG_ItemDataRegistry* LoadedRegistry = AssetManager.GetPrimaryAssetObject<UBG_ItemDataRegistry>(RegistryId))
 	{
@@ -130,21 +141,16 @@ UBG_ItemDataRegistry* UBG_ItemDataRegistrySubsystem::LoadRegistryFromAssetManage
 	}
 
 	const FSoftObjectPath RegistryPath = AssetManager.GetPrimaryAssetPath(RegistryId);
-	if (!RegistryPath.IsValid())
-	{
-		LOGE(TEXT("AssetManager returned an invalid path for item data registry id %s."), *RegistryId.ToString());
+	if (!ensureMsgf(RegistryPath.IsValid(), TEXT("AssetManager returned an invalid path for item data registry id %s."),
+	                *RegistryId.ToString()))
 		return nullptr;
-	}
 
 	UObject* LoadedObject = AssetManager.GetStreamableManager().LoadSynchronous(RegistryPath, true);
 	UBG_ItemDataRegistry* LoadedRegistry = Cast<UBG_ItemDataRegistry>(LoadedObject);
-	if (!LoadedRegistry)
-	{
-		LOGE(TEXT("AssetManager loaded %s for item data registry id %s, but it is not UBG_ItemDataRegistry."),
-		     *GetNameSafe(LoadedObject),
-		     *RegistryId.ToString());
+	if (!ensureMsgf(LoadedRegistry,
+	                TEXT("AssetManager loaded %s for item data registry id %s, but it is not UBG_ItemDataRegistry."),
+	                *GetNameSafe(LoadedObject), *RegistryId.ToString()))
 		return nullptr;
-	}
 
 	return LoadedRegistry;
 }

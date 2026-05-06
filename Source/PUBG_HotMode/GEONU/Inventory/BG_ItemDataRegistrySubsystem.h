@@ -37,6 +37,10 @@ public: // --- Data Access ---
 	UFUNCTION(BlueprintCallable, Category="Item Data")
 	bool ValidateRegistry() const;
 
+	/// Recheck cached weapon fire specs
+	UFUNCTION(BlueprintCallable, Category="Item Data|Weapon Fire")
+	bool ValidateWeaponFireSpecs() const;
+
 public: // --- Item Data Queries ---
 	/// Check row by GameplayTag
 	UFUNCTION(BlueprintCallable, Category="Item Data")
@@ -49,6 +53,15 @@ public: // --- Item Data Queries ---
 	/// Find validated base row
 	const FBG_ItemDataRow* FindItemRow(
 		EBG_ItemType ItemType, const FGameplayTag& ItemTag,
+		FString* OutFailureReason = nullptr);
+
+	/// Check weapon fire spec row by GameplayTag
+	UFUNCTION(BlueprintCallable, Category="Item Data|Weapon Fire")
+	bool HasValidWeaponFireSpecRow(FGameplayTag WeaponItemTag);
+
+	/// Find validated weapon fire spec row
+	const FBG_WeaponFireSpecRow* FindWeaponFireSpecRow(
+		const FGameplayTag& WeaponItemTag,
 		FString* OutFailureReason = nullptr);
 
 	/// Find validated typed row
