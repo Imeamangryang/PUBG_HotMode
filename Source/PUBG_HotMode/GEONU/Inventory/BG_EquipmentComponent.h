@@ -152,46 +152,43 @@ public: // --- Component Lookup ---
 	UFUNCTION(BlueprintCallable, Category="Equipment")
 	static UBG_EquipmentComponent* FindEquipmentComponent(class AActor* TargetActor);
 
-public: // --- Equipment Mutation ---
+public: // --- Equipment Commands ---
 	UFUNCTION(BlueprintCallable, Category="Equipment|Weapon")
-	bool TryEquipWeapon(EBG_EquipmentSlot WeaponSlot, FGameplayTag WeaponItemTag, int32 LoadedAmmo,
-	                    FGameplayTag& OutReplacedWeaponItemTag, int32& OutReplacedLoadedAmmo);
-
-	UFUNCTION(BlueprintCallable, Category="Equipment|Weapon")
-	bool TryUnequipWeapon(EBG_EquipmentSlot WeaponSlot,
-	                      FGameplayTag& OutRemovedWeaponItemTag, int32& OutRemovedLoadedAmmo);
-
-	UFUNCTION(BlueprintCallable, Category="Equipment|Weapon")
-	bool TryActivateWeapon(EBG_EquipmentSlot WeaponSlot);
-
-	UFUNCTION(BlueprintCallable, Category="Equipment|Weapon")
-	bool TryLoadAmmo(EBG_EquipmentSlot WeaponSlot, int32 LoadedAmmo);
-
-	UFUNCTION(BlueprintCallable, Category="Equipment|Armor")
-	bool TryEquipArmor(EBG_EquipmentSlot ArmorSlot, FGameplayTag ArmorItemTag,
-	                   FGameplayTag& OutReplacedArmorItemTag, float& OutReplacedArmorDurability);
-
-	UFUNCTION(BlueprintCallable, Category="Equipment|Armor")
-	bool TryUnequipArmor(EBG_EquipmentSlot ArmorSlot, FGameplayTag& OutRemovedArmorItemTag,
-	                     float& OutRemovedArmorDurability);
-
-	UFUNCTION(BlueprintCallable, Category="Equipment|Backpack")
-	bool TryEquipBackpack(FGameplayTag BackpackItemTag, FGameplayTag& OutReplacedBackpackItemTag);
-
-	UFUNCTION(BlueprintCallable, Category="Equipment|Backpack")
-	bool TryUnequipBackpack(FGameplayTag& OutRemovedBackpackItemTag);
+	void ActivateWeapon(EBG_EquipmentSlot WeaponSlot);
 
 	UFUNCTION(BlueprintCallable, Category="Equipment|Throwable")
-	bool TrySetThrowable(FGameplayTag ThrowableItemTag);
+	void SetThrowable(FGameplayTag ThrowableItemTag);
 
 	UFUNCTION(BlueprintCallable, Category="Equipment|Throwable")
-	bool TryClearThrowable();
+	void ClearThrowable();
 
 	UFUNCTION(BlueprintCallable, Category="Equipment")
-	void RequestDropEquipment(EBG_EquipmentSlot EquipmentSlot);
+	void DropEquipment(EBG_EquipmentSlot EquipmentSlot);
 
-	UFUNCTION(BlueprintCallable, Category="Equipment")
-	bool TryDropEquipment(EBG_EquipmentSlot EquipmentSlot, EBGInventoryFailReason& OutFailReason);
+public: // --- Authority C++ API ---
+	bool Auth_EquipWeapon(EBG_EquipmentSlot WeaponSlot, FGameplayTag WeaponItemTag, int32 LoadedAmmo,
+	                      FGameplayTag& OutReplacedWeaponItemTag, int32& OutReplacedLoadedAmmo);
+
+	bool Auth_UnequipWeapon(EBG_EquipmentSlot WeaponSlot,
+	                        FGameplayTag& OutRemovedWeaponItemTag, int32& OutRemovedLoadedAmmo);
+
+	bool Auth_ActivateWeapon(EBG_EquipmentSlot WeaponSlot);
+
+	bool Auth_LoadAmmo(EBG_EquipmentSlot WeaponSlot, int32 LoadedAmmo);
+
+	bool Auth_EquipArmor(EBG_EquipmentSlot ArmorSlot, FGameplayTag ArmorItemTag,
+	                     FGameplayTag& OutReplacedArmorItemTag, float& OutReplacedArmorDurability);
+
+	bool Auth_UnequipArmor(EBG_EquipmentSlot ArmorSlot, FGameplayTag& OutRemovedArmorItemTag,
+	                       float& OutRemovedArmorDurability);
+
+	bool Auth_EquipBackpack(FGameplayTag BackpackItemTag, FGameplayTag& OutReplacedBackpackItemTag);
+
+	bool Auth_UnequipBackpack(FGameplayTag& OutRemovedBackpackItemTag);
+
+	bool Auth_SetThrowable(FGameplayTag ThrowableItemTag);
+
+	bool Auth_ClearThrowable();
 
 public: // --- Equipment Query ---
 	UFUNCTION(BlueprintPure, Category="Equipment")
@@ -253,7 +250,22 @@ private: // --- Validation ---
 	bool CanMutateEquipmentState(const TCHAR* OperationName) const;
 
 	UFUNCTION(Server, Reliable)
-	void Server_RequestDropEquipment(EBG_EquipmentSlot EquipmentSlot);
+	void Server_ActivateWeapon(EBG_EquipmentSlot WeaponSlot);
+
+	UFUNCTION(Server, Reliable)
+	void Server_SetThrowable(FGameplayTag ThrowableItemTag);
+
+	UFUNCTION(Server, Reliable)
+	void Server_ClearThrowable();
+
+	UFUNCTION(Server, Reliable)
+	void Server_DropEquipment(EBG_EquipmentSlot EquipmentSlot);
+
+	bool Auth_DropEquipment(EBG_EquipmentSlot EquipmentSlot, EBGInventoryFailReason& OutFailReason);
+	bool Auth_DropWeapon(EBG_EquipmentSlot WeaponSlot, EBGInventoryFailReason& OutFailReason);
+	bool Auth_DropArmor(EBG_EquipmentSlot ArmorSlot, EBGInventoryFailReason& OutFailReason);
+	bool Auth_DropBackpack(EBGInventoryFailReason& OutFailReason);
+	bool Auth_DropThrowable(EBGInventoryFailReason& OutFailReason);
 
 	bool IsWeaponSlot(EBG_EquipmentSlot Slot) const;
 	bool IsArmorSlot(EBG_EquipmentSlot Slot) const;

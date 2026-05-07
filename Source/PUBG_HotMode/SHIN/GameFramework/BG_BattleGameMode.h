@@ -23,9 +23,13 @@ protected:
 	void SpawnAndPossessPlayer(APlayerController* NewPlayer);
 	void StartPreparationPhase();
 	void TickPreparationPhase();
-	
+
+protected:
 	UPROPERTY(EditDefaultsOnly, Category = "BG|Battle")
 	int32 PreparationDuration = 30;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class ABG_Airplane> PreparedAirplane = nullptr;
 
 	FTimerHandle PreparationTimerHandle;
 };

@@ -38,8 +38,11 @@ void UBG_InventoryViewModel::BeginPlay()
 	Super::BeginPlay();
 
 	const APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (!ensureMsgf(PC, TEXT("%s must be owned by PlayerController."), *GetNameSafe(this)))
+	if (!PC)
+	{
+		LOGE(TEXT("%s must be owned by PlayerController."), *GetNameSafe(this));
 		return;
+	}
 
 	if (!PC->IsLocalController())
 		return;
@@ -58,41 +61,52 @@ void UBG_InventoryViewModel::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void UBG_InventoryViewModel::NotifyPossessedCharacterReady(ABG_Character* InCharacter)
 {
 	const APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (!ensureMsgf(PC, TEXT("%s must be owned by APlayerController to bind possessed character."), *GetNameSafe(this)))
+	if (!PC)
+	{
+		LOGE(TEXT("%s must be owned by APlayerController to bind possessed character."), *GetNameSafe(this));
 		return;
+	}
 
 	if (!PC->IsLocalController())
 		return;
 
-	if (!ensureMsgf(InCharacter, TEXT("%s received a null character in NotifyPossessedCharacterReady."),
-	                *GetNameSafe(this)))
+	if (!InCharacter)
 	{
+		LOGE(TEXT("%s received a null character in NotifyPossessedCharacterReady."),
+			*GetNameSafe(this));
 		UnbindFromCharacter();
 		return;
+
 	}
 
 	UBG_InventoryComponent* InventoryComponent = InCharacter->GetInventoryComponent();
-	if (!ensureMsgf(InventoryComponent, TEXT("%s could not bind because %s had no InventoryComponent."),
-	                *GetNameSafe(this), *GetNameSafe(InCharacter)))
+	if (!InventoryComponent)
 	{
+		LOGE(TEXT("%s could not bind because %s had no InventoryComponent."),
+			*GetNameSafe(this), *GetNameSafe(InCharacter));
 		UnbindFromCharacter();
 		return;
+
 	}
 
 	UBG_EquipmentComponent* EquipmentComponent = InCharacter->GetEquipmentComponent();
-	if (!ensureMsgf(EquipmentComponent, TEXT("%s could not bind because %s had no EquipmentComponent."),
-	                *GetNameSafe(this), *GetNameSafe(InCharacter)))
+	if (!EquipmentComponent)
 	{
+		LOGE(TEXT("%s could not bind because %s had no EquipmentComponent."),
+			*GetNameSafe(this), *GetNameSafe(InCharacter));
 		UnbindFromCharacter();
 		return;
+
 	}
 
 	UBG_ItemUseComponent* ItemUseComponent = InCharacter->GetItemUseComponent();
-	if (!ensureMsgf(ItemUseComponent, TEXT("%s could not bind because %s had no ItemUseComponent."),
-	                *GetNameSafe(this), *GetNameSafe(InCharacter)))
+	if (!ItemUseComponent)
 	{
+		LOGE(TEXT("%s could not bind because %s had no ItemUseComponent."),
+			*GetNameSafe(this), *GetNameSafe(InCharacter));
 		UnbindFromCharacter();
 		return;
+
 	}
 
 	BindToCharacter(InCharacter, InventoryComponent, EquipmentComponent, ItemUseComponent);
@@ -101,9 +115,12 @@ void UBG_InventoryViewModel::NotifyPossessedCharacterReady(ABG_Character* InChar
 void UBG_InventoryViewModel::NotifyPossessedCharacterCleared()
 {
 	const APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (!ensureMsgf(PC, TEXT("%s must be owned by APlayerController to clear possessed character binding."),
-	                *GetNameSafe(this)))
+	if (!PC)
+	{
+		LOGE(TEXT("%s must be owned by APlayerController to clear possessed character binding."),
+			*GetNameSafe(this));
 		return;
+	}
 
 	if (!PC->IsLocalController())
 		return;
@@ -118,106 +135,116 @@ void UBG_InventoryViewModel::NotifyPossessedCharacterCleared()
 	ForceBroadcastAll();
 }
 
-// --- Requests ------------
+// --- Commands ------------
 
-bool UBG_InventoryViewModel::RequestPickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity)
+bool UBG_InventoryViewModel::PickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity)
 {
-	ABG_Character* Character = GetBoundCharacter(TEXT("RequestPickupWorldItem"));
+	ABG_Character* Character = GetBoundCharacter(TEXT("PickupWorldItem"));
 	if (!Character)
 		return false;
 
-	if (!ensureMsgf(IsValid(WorldItem), TEXT("%s: RequestPickupWorldItem failed because WorldItem was invalid."),
-	                *GetNameSafe(this)))
+	if (!IsValid(WorldItem))
 	{
+		LOGE(TEXT("%s: PickupWorldItem failed because WorldItem was invalid."),
+			*GetNameSafe(this));
 		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, EBG_ItemType::None, FGameplayTag());
 		return false;
+
 	}
 
-	if (!ensureMsgf(Quantity > 0, TEXT("%s: RequestPickupWorldItem failed because Quantity=%d was not positive."),
-	                *GetNameSafe(this), Quantity))
+	if (!(Quantity > 0))
 	{
+		LOGE(TEXT("%s: PickupWorldItem failed because Quantity=%d was not positive."),
+			*GetNameSafe(this), Quantity);
 		NotifyInventoryFailure(EBGInventoryFailReason::InvalidQuantity, WorldItem->GetItemType(),
 		                       WorldItem->GetItemTag());
 		return false;
+
 	}
 
-	Character->RequestPickupWorldItem(WorldItem, Quantity);
+	Character->PickupWorldItem(WorldItem, Quantity);
 	return true;
 }
 
-bool UBG_InventoryViewModel::RequestPickupNearbyWorldItem(int32 Quantity)
+bool UBG_InventoryViewModel::PickupNearbyWorldItem(int32 Quantity)
 {
 	ABG_WorldItemBase* WorldItem = GetBestNearbyWorldItem();
-	if (!ensureMsgf(
-		WorldItem, TEXT("%s: RequestPickupNearbyWorldItem failed because no nearby WorldItem was available."),
-		*GetNameSafe(this)))
+	if (!WorldItem)
 	{
+		LOGE(TEXT("%s: PickupNearbyWorldItem failed because no nearby WorldItem was available."),
+			*GetNameSafe(this));
 		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, EBG_ItemType::None, FGameplayTag());
 		return false;
+
 	}
 
-	return RequestPickupWorldItem(WorldItem, Quantity > 0 ? Quantity : WorldItem->GetQuantity());
+	return PickupWorldItem(WorldItem, Quantity > 0 ? Quantity : WorldItem->GetQuantity());
 }
 
-bool UBG_InventoryViewModel::RequestDropInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity)
+bool UBG_InventoryViewModel::DropInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity)
 {
-	UBG_InventoryComponent* InventoryComponent = GetBoundInventoryComponent(TEXT("RequestDropInventoryItem"));
+	UBG_InventoryComponent* InventoryComponent = GetBoundInventoryComponent(TEXT("DropInventoryItem"));
 	if (!InventoryComponent)
 		return false;
 
-	if (!ensureMsgf(Quantity > 0, TEXT("%s: RequestDropInventoryItem failed because Quantity=%d was not positive."),
-	                *GetNameSafe(this), Quantity))
+	if (!(Quantity > 0))
 	{
+		LOGE(TEXT("%s: DropInventoryItem failed because Quantity=%d was not positive."),
+			*GetNameSafe(this), Quantity);
 		NotifyInventoryFailure(EBGInventoryFailReason::InvalidQuantity, ItemType, ItemTag);
 		return false;
+
 	}
 
-	InventoryComponent->RequestDropItem(ItemType, ItemTag, Quantity);
+	InventoryComponent->DropItem(ItemType, ItemTag, Quantity);
 	return true;
 }
 
-bool UBG_InventoryViewModel::RequestDropEquipment(EBG_EquipmentSlot EquipmentSlot)
+bool UBG_InventoryViewModel::DropEquipment(EBG_EquipmentSlot EquipmentSlot)
 {
-	UBG_EquipmentComponent* EquipmentComponent = GetBoundEquipmentComponent(TEXT("RequestDropEquipment"));
+	UBG_EquipmentComponent* EquipmentComponent = GetBoundEquipmentComponent(TEXT("DropEquipment"));
 	if (!EquipmentComponent)
 		return false;
 
-	EquipmentComponent->RequestDropEquipment(EquipmentSlot);
+	EquipmentComponent->DropEquipment(EquipmentSlot);
 	return true;
 }
 
-bool UBG_InventoryViewModel::RequestUseInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag)
+bool UBG_InventoryViewModel::UseInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag)
 {
-	UBG_ItemUseComponent* ItemUseComponent = GetBoundItemUseComponent(TEXT("RequestUseInventoryItem"));
+	UBG_ItemUseComponent* ItemUseComponent = GetBoundItemUseComponent(TEXT("UseInventoryItem"));
 	if (!ItemUseComponent)
 		return false;
 
-	if (!ensureMsgf(ItemType == EBG_ItemType::Heal || ItemType == EBG_ItemType::Boost,
-	                TEXT("%s: RequestUseInventoryItem failed because item type %d is not usable."),
-	                *GetNameSafe(this), static_cast<int32>(ItemType)))
+	if (!(ItemType == EBG_ItemType::Heal || ItemType == EBG_ItemType::Boost))
 	{
+		LOGE(TEXT("%s: UseInventoryItem failed because item type %d is not usable."),
+			*GetNameSafe(this), static_cast<int32>(ItemType));
 		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, ItemType, ItemTag);
 		return false;
+
 	}
 
-	if (!ensureMsgf(ItemTag.IsValid(), TEXT("%s: RequestUseInventoryItem failed because ItemTag was invalid."),
-	                *GetNameSafe(this)))
+	if (!ItemTag.IsValid())
 	{
+		LOGE(TEXT("%s: UseInventoryItem failed because ItemTag was invalid."),
+			*GetNameSafe(this));
 		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, ItemType, ItemTag);
 		return false;
+
 	}
 
-	ItemUseComponent->RequestUseItem(ItemType, ItemTag);
+	ItemUseComponent->UseItem(ItemType, ItemTag);
 	return true;
 }
 
-bool UBG_InventoryViewModel::RequestCancelItemUse()
+bool UBG_InventoryViewModel::CancelItemUse()
 {
-	UBG_ItemUseComponent* ItemUseComponent = GetBoundItemUseComponent(TEXT("RequestCancelItemUse"));
+	UBG_ItemUseComponent* ItemUseComponent = GetBoundItemUseComponent(TEXT("CancelItemUse"));
 	if (!ItemUseComponent)
 		return false;
 
-	ItemUseComponent->RequestCancelItemUse();
+	ItemUseComponent->CancelItemUse();
 	return true;
 }
 
@@ -260,33 +287,40 @@ void UBG_InventoryViewModel::BindToCharacter(
 	UBG_ItemUseComponent* InItemUseComponent)
 {
 	const APlayerController* PC = Cast<APlayerController>(GetOwner());
-	if (!ensureMsgf(PC, TEXT("%s must be owned by APlayerController to bind inventory state."), *GetNameSafe(this)))
+	if (!PC)
+	{
+		LOGE(TEXT("%s must be owned by APlayerController to bind inventory state."), *GetNameSafe(this));
 		return;
+	}
 
 	if (!PC->IsLocalController())
 		return;
 
-	if (!ensureMsgf(InCharacter && InInventoryComponent && InEquipmentComponent && InItemUseComponent,
-	                TEXT("%s: BindToCharacter failed. Character=%s, Inventory=%s, Equipment=%s, ItemUse=%s."),
-	                *GetNameSafe(this),
-	                *GetNameSafe(InCharacter),
-	                *GetNameSafe(InInventoryComponent),
-	                *GetNameSafe(InEquipmentComponent),
-	                *GetNameSafe(InItemUseComponent)))
+	if (!(InCharacter && InInventoryComponent && InEquipmentComponent && InItemUseComponent))
+	{
+		LOGE(TEXT("%s: BindToCharacter failed. Character=%s, Inventory=%s, Equipment=%s, ItemUse=%s."),
+			*GetNameSafe(this),
+			*GetNameSafe(InCharacter),
+			*GetNameSafe(InInventoryComponent),
+			*GetNameSafe(InEquipmentComponent),
+			*GetNameSafe(InItemUseComponent));
 		return;
+	}
 
-	if (!ensureMsgf(InInventoryComponent->GetOwner() == InCharacter
-	                && InEquipmentComponent->GetOwner() == InCharacter
-	                && InItemUseComponent->GetOwner() == InCharacter,
-	                TEXT(
-		                "%s tried to bind components that do not belong to %s. InventoryOwner=%s, EquipmentOwner=%s, ItemUseOwner=%s."
-	                ),
-	                *GetNameSafe(this),
-	                *GetNameSafe(InCharacter),
-	                *GetNameSafe(InInventoryComponent->GetOwner()),
-	                *GetNameSafe(InEquipmentComponent->GetOwner()),
-	                *GetNameSafe(InItemUseComponent->GetOwner())))
+	if (!(InInventoryComponent->GetOwner() == InCharacter
+	      && InEquipmentComponent->GetOwner() == InCharacter
+	      && InItemUseComponent->GetOwner() == InCharacter))
+	{
+		LOGE(TEXT(
+			"%s tried to bind components that do not belong to %s. InventoryOwner=%s, EquipmentOwner=%s, ItemUseOwner=%s."
+			),
+			*GetNameSafe(this),
+			*GetNameSafe(InCharacter),
+			*GetNameSafe(InInventoryComponent->GetOwner()),
+			*GetNameSafe(InEquipmentComponent->GetOwner()),
+			*GetNameSafe(InItemUseComponent->GetOwner()));
 		return;
+	}
 
 	if (BoundCharacter == InCharacter
 		&& BoundInventoryComponent == InInventoryComponent
@@ -409,13 +443,14 @@ void UBG_InventoryViewModel::RefreshInventoryRenderData()
 	InventoryItems.Reset();
 
 	const UBG_InventoryComponent* InventoryComponent = BoundInventoryComponent.Get();
-	if (!ensureMsgf(InventoryComponent,
-	                TEXT("%s could not refresh inventory render data because BoundInventoryComponent was null."),
-	                *GetNameSafe(this)))
+	if (!InventoryComponent)
 	{
+		LOGE(TEXT("%s could not refresh inventory render data because BoundInventoryComponent was null."),
+			*GetNameSafe(this));
 		CurrentWeight = 0.f;
 		MaxWeight = 0.f;
 		return;
+
 	}
 
 	for (const FBG_InventoryEntry& Entry : InventoryComponent->GetInventoryEntries())
@@ -435,10 +470,12 @@ void UBG_InventoryViewModel::RefreshEquipmentRenderData()
 	EquipmentSlots.Reset();
 
 	const UBG_EquipmentComponent* EquipmentComponent = BoundEquipmentComponent.Get();
-	if (!ensureMsgf(EquipmentComponent,
-	                TEXT("%s could not refresh equipment render data because BoundEquipmentComponent was null."),
-	                *GetNameSafe(this)))
+	if (!EquipmentComponent)
+	{
+		LOGE(TEXT("%s could not refresh equipment render data because BoundEquipmentComponent was null."),
+			*GetNameSafe(this));
 		return;
+	}
 
 	for (const EBG_EquipmentSlot Slot : EquipmentSlotRenderOrder)
 	{
@@ -451,11 +488,13 @@ void UBG_InventoryViewModel::RefreshNearbyWorldItemRenderData()
 	NearbyWorldItems.Reset();
 
 	const ABG_Character* Character = BoundCharacter.Get();
-	if (!ensureMsgf(Character, TEXT("%s could not refresh nearby item render data because BoundCharacter was null."),
-	                *GetNameSafe(this)))
+	if (!Character)
 	{
+		LOGE(TEXT("%s could not refresh nearby item render data because BoundCharacter was null."),
+			*GetNameSafe(this));
 		UnbindNearbyWorldItemStateDelegates();
 		return;
+
 	}
 
 	for (ABG_WorldItemBase* WorldItem : Character->GetNearbyWorldItems())
@@ -535,10 +574,12 @@ FBGEquipmentSlotRenderData UBG_InventoryViewModel::BuildEquipmentSlotRenderData(
 	RenderData.ItemType = GetItemTypeForEquipmentSlot(Slot);
 
 	const UBG_EquipmentComponent* EquipmentComponent = BoundEquipmentComponent.Get();
-	if (!ensureMsgf(EquipmentComponent,
-	                TEXT("%s could not build equipment render data because BoundEquipmentComponent was null."),
-	                *GetNameSafe(this)))
+	if (!EquipmentComponent)
+	{
+		LOGE(TEXT("%s could not build equipment render data because BoundEquipmentComponent was null."),
+			*GetNameSafe(this));
 		return RenderData;
+	}
 
 	RenderData.ItemTag = EquipmentComponent->GetEquippedItemTag(Slot);
 	RenderData.bEquipped = RenderData.ItemTag.IsValid();
@@ -560,11 +601,13 @@ FBGEquipmentSlotRenderData UBG_InventoryViewModel::BuildEquipmentSlotRenderData(
 	else if (RenderData.ItemType == EBG_ItemType::Throwable)
 	{
 		const UBG_InventoryComponent* InventoryComponent = BoundInventoryComponent.Get();
-		if (ensureMsgf(InventoryComponent,
-		               TEXT("%s could not read throwable quantity because BoundInventoryComponent was null."),
-		               *GetNameSafe(this)))
-		{
+				if (InventoryComponent){
 			RenderData.Quantity = InventoryComponent->GetQuantity(EBG_ItemType::Throwable, RenderData.ItemTag);
+		}
+		else
+		{
+			LOGE(TEXT("%s could not read throwable quantity because BoundInventoryComponent was null."),
+				*GetNameSafe(this));
 		}
 	}
 
@@ -584,10 +627,12 @@ FBGNearbyWorldItemRenderData UBG_InventoryViewModel::BuildNearbyWorldItemRenderD
 	FBGNearbyWorldItemRenderData RenderData;
 	RenderData.WorldItem = WorldItem;
 
-	if (!ensureMsgf(IsValid(WorldItem),
-	                TEXT("%s could not build nearby world item render data because WorldItem was invalid."),
-	                *GetNameSafe(this)))
+	if (!IsValid(WorldItem))
+	{
+		LOGE(TEXT("%s could not build nearby world item render data because WorldItem was invalid."),
+			*GetNameSafe(this));
 		return RenderData;
+	}
 
 	RenderData.ItemType = WorldItem->GetItemType();
 	RenderData.ItemTag = WorldItem->GetItemTag();
@@ -694,9 +739,12 @@ const FBG_ItemDataRow* UBG_InventoryViewModel::FindItemRow(
 
 	FString FailureReason;
 	const FBG_ItemDataRow* ItemRow = RegistrySubsystem->FindItemRow(ItemType, ItemTag, &FailureReason);
-	ensureMsgf(ItemRow, TEXT("%s: %s failed to find item row. ItemType=%d, ItemTag=%s, Reason=%s."),
-	           *GetNameSafe(this), OperationName, static_cast<int32>(ItemType),
-	           *ItemTag.ToString(), *FailureReason);
+	if (!ItemRow)
+	{
+		LOGE(TEXT("%s: %s failed to find item row. ItemType=%d, ItemTag=%s, Reason=%s."),
+			*GetNameSafe(this), OperationName, static_cast<int32>(ItemType),
+			*ItemTag.ToString(), *FailureReason);
+	}
 	return ItemRow;
 }
 
@@ -704,18 +752,27 @@ UBG_ItemDataRegistrySubsystem* UBG_InventoryViewModel::GetItemDataRegistrySubsys
 	const TCHAR* OperationName) const
 {
 	const UWorld* World = GetWorld();
-	if (!ensureMsgf(World, TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName))
+	if (!World)
+	{
+		LOGE(TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName);
 		return nullptr;
+	}
 
 	const UGameInstance* GameInstance = World->GetGameInstance();
-	if (!ensureMsgf(GameInstance, TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this),
-	                OperationName))
+	if (!GameInstance)
+	{
+		LOGE(TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this),
+			OperationName);
 		return nullptr;
+	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem =
 		GameInstance->GetSubsystem<UBG_ItemDataRegistrySubsystem>();
-	ensureMsgf(RegistrySubsystem, TEXT("%s: %s failed because ItemDataRegistrySubsystem was null."),
-	           *GetNameSafe(this), OperationName);
+	if (!RegistrySubsystem)
+	{
+		LOGE(TEXT("%s: %s failed because ItemDataRegistrySubsystem was null."),
+			*GetNameSafe(this), OperationName);
+	}
 	return RegistrySubsystem;
 }
 
@@ -724,31 +781,43 @@ UBG_ItemDataRegistrySubsystem* UBG_InventoryViewModel::GetItemDataRegistrySubsys
 ABG_Character* UBG_InventoryViewModel::GetBoundCharacter(const TCHAR* OperationName) const
 {
 	ABG_Character* Character = BoundCharacter.Get();
-	ensureMsgf(Character, TEXT("%s: %s failed because BoundCharacter was null."), *GetNameSafe(this), OperationName);
+	if (!Character)
+	{
+		LOGE(TEXT("%s: %s failed because BoundCharacter was null."), *GetNameSafe(this), OperationName);
+	}
 	return Character;
 }
 
 UBG_InventoryComponent* UBG_InventoryViewModel::GetBoundInventoryComponent(const TCHAR* OperationName) const
 {
 	UBG_InventoryComponent* InventoryComponent = BoundInventoryComponent.Get();
-	ensureMsgf(InventoryComponent, TEXT("%s: %s failed because BoundInventoryComponent was null."), *GetNameSafe(this),
-	           OperationName);
+	if (!InventoryComponent)
+	{
+		LOGE(TEXT("%s: %s failed because BoundInventoryComponent was null."), *GetNameSafe(this),
+			OperationName);
+	}
 	return InventoryComponent;
 }
 
 UBG_EquipmentComponent* UBG_InventoryViewModel::GetBoundEquipmentComponent(const TCHAR* OperationName) const
 {
 	UBG_EquipmentComponent* EquipmentComponent = BoundEquipmentComponent.Get();
-	ensureMsgf(EquipmentComponent, TEXT("%s: %s failed because BoundEquipmentComponent was null."), *GetNameSafe(this),
-	           OperationName);
+	if (!EquipmentComponent)
+	{
+		LOGE(TEXT("%s: %s failed because BoundEquipmentComponent was null."), *GetNameSafe(this),
+			OperationName);
+	}
 	return EquipmentComponent;
 }
 
 UBG_ItemUseComponent* UBG_InventoryViewModel::GetBoundItemUseComponent(const TCHAR* OperationName) const
 {
 	UBG_ItemUseComponent* ItemUseComponent = BoundItemUseComponent.Get();
-	ensureMsgf(ItemUseComponent, TEXT("%s: %s failed because BoundItemUseComponent was null."), *GetNameSafe(this),
-	           OperationName);
+	if (!ItemUseComponent)
+	{
+		LOGE(TEXT("%s: %s failed because BoundItemUseComponent was null."), *GetNameSafe(this),
+			OperationName);
+	}
 	return ItemUseComponent;
 }
 

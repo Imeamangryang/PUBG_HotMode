@@ -46,27 +46,24 @@ public: // --- Component Lookup ---
 	UFUNCTION(BlueprintCallable, Category="Inventory")
 	static UBG_InventoryComponent* FindInventoryComponent(class AActor* TargetActor);
 
-public: // --- Inventory Mutation ---
-	// Server item add
+public: // --- Inventory Commands ---
+	// Client/server drop command
 	UFUNCTION(BlueprintCallable, Category="Inventory")
-	bool TryAddItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity, int32& OutAddedQuantity);
+	void DropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
+
+public: // --- Authority C++ API ---
+	// Server item add
+	bool Auth_AddItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity, int32& OutAddedQuantity);
 
 	// Server item remove
-	UFUNCTION(BlueprintCallable, Category="Inventory")
-	bool TryRemoveItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity, int32& OutRemovedQuantity);
-
-	// Client/server drop request
-	UFUNCTION(BlueprintCallable, Category="Inventory")
-	void RequestDropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
+	bool Auth_RemoveItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity, int32& OutRemovedQuantity);
 
 	// Server item drop
-	UFUNCTION(BlueprintCallable, Category="Inventory")
-	bool TryDropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity,
-	                 EBGInventoryFailReason& OutFailReason);
+	bool Auth_DropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity,
+	                   EBGInventoryFailReason& OutFailReason);
 
 	// Backpack capacity bonus update
-	UFUNCTION(BlueprintCallable, Category="Inventory")
-	bool SetBackpackWeightBonus(float NewBackpackWeightBonus);
+	bool Auth_SetBackpackBonus(float NewBackpackWeightBonus);
 
 public: // --- Inventory Query ---
 	// Add validation and accepted quantity
@@ -122,10 +119,14 @@ private: // --- Validation ---
 	bool CanMutateInventoryState(const TCHAR* OperationName) const;
 
 	UFUNCTION(Server, Reliable)
-	void Server_RequestDropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
+	void Server_DropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
 
 	// Regular inventory type guard
 	bool IsRegularInventoryItemType(EBG_ItemType ItemType) const;
+
+	// Drop validation
+	bool CanDropItem(EBG_ItemType ItemType, const FGameplayTag& ItemTag, int32 Quantity,
+	                 EBGInventoryFailReason& OutFailReason) const;
 
 private: // --- Item Data ---
 	// Registry subsystem lookup

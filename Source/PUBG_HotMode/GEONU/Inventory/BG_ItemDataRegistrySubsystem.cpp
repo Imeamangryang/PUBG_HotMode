@@ -27,13 +27,19 @@ bool UBG_ItemDataRegistrySubsystem::LoadRegistry()
 	if (!CachedRegistry)
 	{
 		CachedRegistry = LoadRegistryFromAssetManager();
-		if (!ensureMsgf(CachedRegistry, TEXT("UBG_ItemDataRegistrySubsystem failed to load item data registry.")))
+		if (!CachedRegistry)
+		{
+			LOGE(TEXT("UBG_ItemDataRegistrySubsystem failed to load item data registry."));
 			return false;
+		}
 	}
 
-	if (!ensureMsgf(CachedRegistry->ValidateRegistry(), TEXT("Item data registry %s loaded but validation failed."),
-	                *GetNameSafe(CachedRegistry)))
+	if (!CachedRegistry->ValidateRegistry())
+	{
+		LOGE(TEXT("Item data registry %s loaded but validation failed."),
+			*GetNameSafe(CachedRegistry));
 		return false;
+	}
 
 	LOGD(TEXT("Item data registry %s loaded successfully."), *GetNameSafe(CachedRegistry));
 	return true;
@@ -51,18 +57,22 @@ bool UBG_ItemDataRegistrySubsystem::IsRegistryLoaded() const
 
 bool UBG_ItemDataRegistrySubsystem::ValidateRegistry() const
 {
-	if (!ensureMsgf(CachedRegistry,
-	                TEXT("UBG_ItemDataRegistrySubsystem cannot validate because CachedRegistry is null.")))
+	if (!CachedRegistry)
+	{
+		LOGE(TEXT("UBG_ItemDataRegistrySubsystem cannot validate because CachedRegistry is null."));
 		return false;
+	}
 
 	return CachedRegistry->ValidateRegistry();
 }
 
 bool UBG_ItemDataRegistrySubsystem::ValidateWeaponFireSpecs() const
 {
-	if (!ensureMsgf(CachedRegistry,
-	                TEXT("UBG_ItemDataRegistrySubsystem cannot validate weapon fire specs because CachedRegistry is null.")))
+	if (!CachedRegistry)
+	{
+		LOGE(TEXT("UBG_ItemDataRegistrySubsystem cannot validate weapon fire specs because CachedRegistry is null."));
 		return false;
+	}
 
 	return CachedRegistry->ValidateWeaponFireSpecs();
 }
@@ -141,16 +151,21 @@ UBG_ItemDataRegistry* UBG_ItemDataRegistrySubsystem::LoadRegistryFromAssetManage
 	}
 
 	const FSoftObjectPath RegistryPath = AssetManager.GetPrimaryAssetPath(RegistryId);
-	if (!ensureMsgf(RegistryPath.IsValid(), TEXT("AssetManager returned an invalid path for item data registry id %s."),
-	                *RegistryId.ToString()))
+	if (!RegistryPath.IsValid())
+	{
+		LOGE(TEXT("AssetManager returned an invalid path for item data registry id %s."),
+			*RegistryId.ToString());
 		return nullptr;
+	}
 
 	UObject* LoadedObject = AssetManager.GetStreamableManager().LoadSynchronous(RegistryPath, true);
 	UBG_ItemDataRegistry* LoadedRegistry = Cast<UBG_ItemDataRegistry>(LoadedObject);
-	if (!ensureMsgf(LoadedRegistry,
-	                TEXT("AssetManager loaded %s for item data registry id %s, but it is not UBG_ItemDataRegistry."),
-	                *GetNameSafe(LoadedObject), *RegistryId.ToString()))
+	if (!LoadedRegistry)
+	{
+		LOGE(TEXT("AssetManager loaded %s for item data registry id %s, but it is not UBG_ItemDataRegistry."),
+			*GetNameSafe(LoadedObject), *RegistryId.ToString());
 		return nullptr;
+	}
 
 	return LoadedRegistry;
 }
@@ -181,8 +196,8 @@ bool UBG_ItemDataRegistrySubsystem::TryResolveRegistryPrimaryAssetId(FPrimaryAss
 	}
 
 	LOGE(TEXT("AssetManager could not find primary asset id %s. Found %d registry asset(s) for type %s."),
-	     *DefaultRegistryId.ToString(),
-	     RegistryIds.Num(),
-	     *UBG_ItemDataRegistry::GetRegistryPrimaryAssetType().ToString());
+		*DefaultRegistryId.ToString(),
+		RegistryIds.Num(),
+		*UBG_ItemDataRegistry::GetRegistryPrimaryAssetType().ToString());
 	return false;
 }

@@ -261,10 +261,13 @@ public:
 	void SetCurrentInteractableWeapon(AActor* NewInteractableWeapon);
 
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
-	void RequestPickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity);
+	void PickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity);
+
+	UFUNCTION(BlueprintCallable, Category = "Inventory")
+	void UseInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag);
 
 	UFUNCTION(Server, Reliable)
-	void Server_RequestPickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity);
+	void Server_PickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity);
 
 	UFUNCTION(Client, Reliable)
 	void Client_ReceiveInventoryFailure(EBGInventoryFailReason FailReason, EBG_ItemType ItemType,

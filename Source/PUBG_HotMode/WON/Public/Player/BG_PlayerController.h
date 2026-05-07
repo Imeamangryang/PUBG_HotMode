@@ -10,6 +10,8 @@ class UBG_InventoryViewModel;
 class UInputAction;
 class UInputMappingContext;
 class UUserWidget;
+class ABG_Airplane;
+class ABG_AirplaneCameraRig;
 struct FInputActionValue;
 enum class EBG_ItemType : uint8;
 enum class EBGInventoryFailReason : uint8;
@@ -103,6 +105,15 @@ public:
 	
 	UFUNCTION(Client, Reliable)
 	void Client_HideBattleWaitingTimeUI();
+	
+	UFUNCTION(Client, Reliable)
+	void Client_BeginAirplaneView(class ABG_Airplane* InAirplane, FVector InStartLocation, FVector InEndLocation, float InFlightSpeed, float InFlightStartTimeSeconds);
+
+	UFUNCTION(Client, Reliable)
+	void Client_EndAirplaneView();
+
+	void BeginAirplaneView(ABG_Airplane* InAirplane);
+	void EndAirplaneView();
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
@@ -180,4 +191,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> BattleWaitingTimeWidget = nullptr;
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Airplane Camera")
+	TSubclassOf<ABG_AirplaneCameraRig> AirplaneCameraRigClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<ABG_AirplaneCameraRig> AirplaneCameraRig = nullptr;
 };

@@ -15,6 +15,9 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Utils/BG_LogHelper.h"
 #include "InputMappingContext.h"
+#include "Actors/BG_Airplane.h"
+#include "Actors/BG_AirplaneCameraRig.h"
+#include "Kismet/GameplayStatics.h"
 
 namespace
 {
@@ -426,6 +429,14 @@ void ABG_PlayerController::OnMoveInputTriggered(const FInputActionValue& Value)
 
 void ABG_PlayerController::OnLookInputTriggered(const FInputActionValue& Value)
 {
+	const FVector2D LookInput = Value.Get<FVector2D>();
+
+	if (AirplaneCameraRig)
+	{
+		AirplaneCameraRig->AddLookInput(LookInput);
+		return;
+	}
+	
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
 		BGCharacter->LookFromInput(Value);
@@ -516,9 +527,11 @@ void ABG_PlayerController::OnUseBandageInputStarted()
 		return;
 	}
 
-	if (!InventoryViewModel)
+	ABG_Character* BGCharacter = GetBGCharacter();
+	if (!BGCharacter)
 	{
-		UE_LOG(LogTemp, Error, TEXT("%s: OnUseBandageInputStarted failed because InventoryViewModel was null."), *GetNameSafe(this));
+		UE_LOG(LogTemp, Error, TEXT("%s: OnUseBandageInputStarted failed because controlled character was null."),
+		       *GetNameSafe(this));
 		return;
 	}
 
@@ -532,7 +545,7 @@ void ABG_PlayerController::OnUseBandageInputStarted()
 		return;
 	}
 
-	InventoryViewModel->RequestUseInventoryItem(EBG_ItemType::Heal, BandageItemTag);
+	BGCharacter->UseInventoryItem(EBG_ItemType::Heal, BandageItemTag);
 }
 
 void ABG_PlayerController::OnCrouchInputStarted()
@@ -757,10 +770,114 @@ void ABG_PlayerController::HideBattleWaitingTimeUI()
 
 	BG_SHIN_LOG_INFO(TEXT("BattleWaitingTime widget removed from player screen"));
 }
+
 void ABG_PlayerController::Client_HideBattleWaitingTimeUI_Implementation()
 {
 	BG_SHIN_LOG_EVENT_BLOCK(this, "Client_HideBattleWaitingTimeUI",
 		TEXT("Removing battle waiting time UI"));
 
 	HideBattleWaitingTimeUI();
+}
+
+void ABG_PlayerController::Client_BeginAirplaneView_Implementation(
+	ABG_Airplane* InAirplane,
+	FVector InStartLocation,
+	FVector InEndLocation,
+	float InFlightSpeed,
+	float InFlightStartTimeSeconds
+)
+{
+	BG_SHIN_LOG_INFO(TEXT("Client_BeginAirplaneView_Implementation CALLED"));
+
+	BeginAirplaneView(InAirplane);
+
+	if (AirplaneCameraRig)
+	{
+		AirplaneCameraRig->InitializeFlightSnapshot(
+			InAirplane,
+			InStartLocation,
+			InEndLocation,
+			InFlightSpeed,
+			InFlightStartTimeSeconds
+		);
+	}
+}
+
+void ABG_PlayerController::Client_EndAirplaneView_Implementation()
+{
+	EndAirplaneView();
+}
+
+void ABG_PlayerController::BeginAirplaneView(ABG_Airplane* InAirplane)
+{
+	if (!IsLocalController())
+	{
+		BG_SHIN_LOG_WARN(TEXT("BeginAirplaneView skipped because controller is not local"));
+		return;
+	}
+
+	if (!InAirplane)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("BeginAirplaneView failed because InAirplane was null"));
+		return;
+	}
+
+	if (!AirplaneCameraRigClass)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("BeginAirplaneView failed because AirplaneCameraRigClass was not set"));
+		return;
+	}
+
+	if (AirplaneCameraRig)
+	{
+		BG_SHIN_LOG_WARN(TEXT("BeginAirplaneView skipped because AirplaneCameraRig already exists"));
+		return;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	AirplaneCameraRig = GetWorld()->SpawnActor<ABG_AirplaneCameraRig>(
+		AirplaneCameraRigClass,
+		FVector::ZeroVector,
+		FRotator::ZeroRotator,
+		SpawnParams
+	);
+
+	if (!AirplaneCameraRig)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("Failed to spawn AirplaneCameraRig from class=%s"),
+			*BGLogHelper::SafeClass(AirplaneCameraRigClass));
+		return;
+	}
+
+	AirplaneCameraRig->Initialize(InAirplane);
+	SetViewTargetWithBlend(AirplaneCameraRig, 1.0f);
+
+	BG_SHIN_LOG_INFO(TEXT("BeginAirplaneView succeeded with airplane=%s rig=%s"),
+		*BGLogHelper::SafeName(InAirplane),
+		*BGLogHelper::SafeName(AirplaneCameraRig));
+}
+
+void ABG_PlayerController::EndAirplaneView()
+{
+	if (!IsLocalController())
+	{
+		BG_SHIN_LOG_WARN(TEXT("EndAirplaneView skipped because controller is not local"));
+		return;
+	}
+
+	if (GetPawn())
+	{
+		SetViewTargetWithBlend(GetPawn(), 1.0f);
+	}
+
+	if (AirplaneCameraRig)
+	{
+		AirplaneCameraRig->Destroy();
+		AirplaneCameraRig = nullptr;
+	}
+
+	BG_SHIN_LOG_INFO(TEXT("EndAirplaneView completed"));
 }

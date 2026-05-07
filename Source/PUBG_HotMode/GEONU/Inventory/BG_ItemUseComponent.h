@@ -74,10 +74,10 @@ public:
 	static UBG_ItemUseComponent* FindItemUseComponent(AActor* TargetActor);
 
 	UFUNCTION(BlueprintCallable, Category="Item Use")
-	void RequestUseItem(EBG_ItemType ItemType, FGameplayTag ItemTag);
+	void UseItem(EBG_ItemType ItemType, FGameplayTag ItemTag);
 
 	UFUNCTION(BlueprintCallable, Category="Item Use")
-	void RequestCancelItemUse();
+	void CancelItemUse();
 
 	UFUNCTION(BlueprintCallable, Category="Item Use")
 	void NotifyMovementInput();
@@ -88,8 +88,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Item Use")
 	void NotifyWeaponSwitch();
 
-	UFUNCTION(BlueprintCallable, Category="Item Use")
-	bool TryStartUseItem(EBG_ItemType ItemType, FGameplayTag ItemTag, EBGInventoryFailReason& OutFailReason);
+	bool Auth_StartUseItem(EBG_ItemType ItemType, FGameplayTag ItemTag, EBGInventoryFailReason& OutFailReason);
 
 	UFUNCTION(BlueprintPure, Category="Item Use")
 	bool IsUsingItem() const { return ItemUseState.bIsUsingItem; }
@@ -112,10 +111,10 @@ public:
 
 private:
 	UFUNCTION(Server, Reliable)
-	void Server_RequestUseItem(EBG_ItemType ItemType, FGameplayTag ItemTag);
+	void Server_UseItem(EBG_ItemType ItemType, FGameplayTag ItemTag);
 
 	UFUNCTION(Server, Reliable)
-	void Server_RequestCancelItemUse();
+	void Server_CancelItemUse();
 
 	UFUNCTION()
 	void OnRep_ItemUseState();

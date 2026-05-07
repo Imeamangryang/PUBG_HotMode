@@ -1,7 +1,9 @@
 ﻿#include "BG_BattleGameMode.h"
 #include "BG_GameState.h"
 #include "Player/BG_PlayerController.h"
+#include "Actors/BG_Airplane.h"
 #include "Utils/BG_LogHelper.h"
+#include "Kismet/GameplayStatics.h"
 
 ABG_BattleGameMode::ABG_BattleGameMode()
 {
@@ -30,6 +32,28 @@ void ABG_BattleGameMode::BeginPlay()
 	else
 	{
 		BG_SHIN_LOG_ERROR(TEXT("GetGameState<ABG_GameState>() returned null"));
+	}
+	
+	// 비행기 찾기
+	TArray<AActor*> FoundAirplanes;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ABG_Airplane::StaticClass(), FoundAirplanes);
+
+	if (FoundAirplanes.Num() > 0)
+	{
+		PreparedAirplane = Cast<ABG_Airplane>(FoundAirplanes[0]);
+
+		if (PreparedAirplane)
+		{
+			BG_SHIN_LOG_INFO(TEXT("PreparedAirplane found in level: %s"), *PreparedAirplane->GetName());
+		}
+		else
+		{
+			BG_SHIN_LOG_ERROR(TEXT("Found airplane actor could not be cast to ABG_Airplane"));
+		}
+	}
+	else
+	{
+		BG_SHIN_LOG_ERROR(TEXT("No ABG_Airplane actors found in level"));
 	}
 }
 
@@ -185,24 +209,38 @@ void ABG_BattleGameMode::TickPreparationPhase()
 			}
 		}
 		
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		ABG_AirplaneActor* Airplane = GetWorld()->SpawnActor<ABG_AirplaneActor>(
-			AirplaneClass,
-			FVector::ZeroVector,
-			FRotator::ZeroRotator,
-			SpawnParams
-		);
-
-		if (Airplane)
+		// 비행기 시작
+		if (!PreparedAirplane)
 		{
-			Airplane->InitializeFlightPath(BlueZoneCenter, BlueZoneRadius, 45.0f);
-			Airplane->StartFlight();
+			BG_SHIN_LOG_ERROR(TEXT("PreparedAirplane is null"));
 		}
+		else
+		{
+			BG_SHIN_LOG_INFO(TEXT("Starting prepared airplane: %s"), *PreparedAirplane->GetName());
+			PreparedAirplane->StartFlight();
 
+			const FVector FlightStartLocation = PreparedAirplane->GetStartLocation();
+			const FVector FlightEndLocation = PreparedAirplane->GetEndLocation();
+			const float FlightSpeed = PreparedAirplane->GetFlightSpeed();
+			const float FlightStartTimeSeconds = PreparedAirplane->GetFlightStartTimeSeconds();
+
+			if (UWorld* World = GetWorld())
+			{
+				for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+				{
+					if (ABG_PlayerController* BGPlayerController = Cast<ABG_PlayerController>(It->Get()))
+					{
+						BGPlayerController->Client_BeginAirplaneView(
+							PreparedAirplane,
+							FlightStartLocation,
+							FlightEndLocation,
+							FlightSpeed,
+							FlightStartTimeSeconds
+						);
+					}
+				}
+			}
+		}
 		BG_SHIN_LOG_INFO(TEXT("Preparation phase ended. MatchState set to Combat"));
 	}
-	
-	
 }

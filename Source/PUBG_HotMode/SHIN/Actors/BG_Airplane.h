@@ -37,6 +37,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BG|Airplane")
 	bool IsFlying() const { return bIsFlying; }
+	
+	UFUNCTION(BlueprintPure, Category = "BG|Airplane")
+	float GetFlightSpeed() const { return FlightSpeed; }
+	
+	UFUNCTION(BlueprintPure, Category = "BG|Airplane")
+	float GetFlightStartTimeSeconds() const { return FlightStartTimeSeconds; }
 
 protected:
 	void UpdateFlightPath();
@@ -53,16 +59,19 @@ protected:
 	FVector CircleCenter = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BG|Airplane|Path", meta = (ClampMin = "0.0"))
-	float CircleRadius = 50000.0f;
+	float CircleRadius = 10000.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BG|Airplane|Path")
 	float FlightAngleDegrees = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BG|Airplane|Path")
+	bool bUseRandomFlightAngle = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BG|Airplane|Path", meta = (ClampMin = "0.0"))
 	float StartEndPadding = 10000.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BG|Airplane|Movement", meta = (ClampMin = "0.0"))
-	float FlightSpeed = 6000.0f;
+	float FlightSpeed = 2000.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BG|Airplane|Movement", meta = (ClampMin = "0.0"))
 	float ArrivalTolerance = 100.0f;
@@ -81,4 +90,7 @@ protected:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "BG|Airplane|Runtime")
 	bool bIsFlying = false;
+	
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "BG|Airplane|Runtime")
+	float FlightStartTimeSeconds = 0.0f;
 };

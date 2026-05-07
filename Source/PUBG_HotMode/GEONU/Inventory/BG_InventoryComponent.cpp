@@ -33,17 +33,23 @@ void UBG_InventoryComponent::BeginPlay()
 	InventoryList.SetOwnerComponent(this);
 
 	const AActor* Owner = GetOwner();
-	if (!ensureMsgf(IsValid(Owner), TEXT("%s: BeginPlay failed because owner was null."), *GetNameSafe(this)))
+	if (!IsValid(Owner))
+	{
+		LOGE(TEXT("%s: BeginPlay failed because owner was null."), *GetNameSafe(this));
 		return;
+	}
 
 	if (!Owner->HasAuthority())
 	{
 		return;
 	}
 
-	if (!ensureMsgf(BaseMaxWeight >= 0.f, TEXT("%s: BeginPlay found invalid BaseMaxWeight %.2f. Resetting to 50."),
-	                *GetNameSafe(this), BaseMaxWeight))
+	if (!(BaseMaxWeight >= 0.f))
+	{
+		LOGE(TEXT("%s: BeginPlay found invalid BaseMaxWeight %.2f. Resetting to 50."),
+			*GetNameSafe(this), BaseMaxWeight);
 		BaseMaxWeight = 50.f;
+	}
 
 	BackpackWeightBonus = FMath::Max(0.f, BackpackWeightBonus);
 	RefreshMaxWeight();
@@ -64,39 +70,47 @@ void UBG_InventoryComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 
 UBG_InventoryComponent* UBG_InventoryComponent::FindInventoryComponent(AActor* TargetActor)
 {
-	if (!ensureMsgf(IsValid(TargetActor),
-	                TEXT("FindInventoryComponent failed because target actor was null or invalid.")))
+	if (!IsValid(TargetActor))
+	{
+		LOGE(TEXT("FindInventoryComponent failed because target actor was null or invalid."));
 		return nullptr;
+	}
 
 	UBG_InventoryComponent* InventoryComponent = TargetActor->FindComponentByClass<UBG_InventoryComponent>();
-	if (!ensureMsgf(InventoryComponent, TEXT("FindInventoryComponent failed because %s has no inventory component."),
-	                *GetNameSafe(TargetActor)))
+	if (!InventoryComponent)
+	{
+		LOGE(TEXT("FindInventoryComponent failed because %s has no inventory component."),
+			*GetNameSafe(TargetActor));
 		return nullptr;
+	}
 
 	return InventoryComponent;
 }
 
-bool UBG_InventoryComponent::TryAddItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity,
+bool UBG_InventoryComponent::Auth_AddItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity,
                                         int32& OutAddedQuantity)
 {
 	OutAddedQuantity = 0;
 
-	if (!CanMutateInventoryState(TEXT("TryAddItem")))
+	if (!CanMutateInventoryState(TEXT("Auth_AddItem")))
 		return false;
 
 	int32 AcceptedQuantity = 0;
 	if (!CanAddItem(ItemType, ItemTag, Quantity, AcceptedQuantity) || AcceptedQuantity <= 0)
 		return false;
 
-	const FBG_ItemDataRow* ItemRow = FindInventoryItemRow(ItemType, ItemTag, TEXT("TryAddItem"));
+	const FBG_ItemDataRow* ItemRow = FindInventoryItemRow(ItemType, ItemTag, TEXT("Auth_AddItem"));
 	if (!ItemRow)
 		return false;
 
 	OutAddedQuantity = InventoryList.AddQuantity(
 		ItemType, ItemTag, AcceptedQuantity, ItemRow->MaxStackSize);
-	if (!ensureMsgf(OutAddedQuantity > 0, TEXT("%s: TryAddItem failed because no quantity was added for %s %s."),
-	                *GetNameSafe(this), *GetItemTypeName(ItemType), *ItemTag.ToString()))
+	if (!(OutAddedQuantity > 0))
+	{
+		LOGE(TEXT("%s: Auth_AddItem failed because no quantity was added for %s %s."),
+			*GetNameSafe(this), *GetItemTypeName(ItemType), *ItemTag.ToString());
 		return false;
+	}
 
 	RecalculateCurrentWeight();
 	BroadcastInventoryChanged();
@@ -105,31 +119,38 @@ bool UBG_InventoryComponent::TryAddItem(EBG_ItemType ItemType, FGameplayTag Item
 	return true;
 }
 
-bool UBG_InventoryComponent::TryRemoveItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity,
+bool UBG_InventoryComponent::Auth_RemoveItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity,
                                            int32& OutRemovedQuantity)
 {
 	OutRemovedQuantity = 0;
 
-	if (!CanMutateInventoryState(TEXT("TryRemoveItem")))
+	if (!CanMutateInventoryState(TEXT("Auth_RemoveItem")))
 		return false;
 
-	if (!ensureMsgf(Quantity > 0, TEXT("%s: TryRemoveItem failed because quantity %d was not positive."),
-	                *GetNameSafe(this), Quantity))
+	if (!(Quantity > 0))
+	{
+		LOGE(TEXT("%s: Auth_RemoveItem failed because quantity %d was not positive."),
+			*GetNameSafe(this), Quantity);
 		return false;
+	}
 
-	if (!FindInventoryItemRow(ItemType, ItemTag, TEXT("TryRemoveItem")))
+	if (!FindInventoryItemRow(ItemType, ItemTag, TEXT("Auth_RemoveItem")))
 		return false;
 
 	const int32 CurrentQuantity = GetQuantity(ItemType, ItemTag);
-	if (!ensureMsgf(CurrentQuantity >= Quantity,
-	                TEXT("%s: TryRemoveItem failed because requested quantity %d exceeds owned quantity %d for %s %s."),
-	                *GetNameSafe(this), Quantity, CurrentQuantity, *GetItemTypeName(ItemType), *ItemTag.ToString()))
+	if (!(CurrentQuantity >= Quantity))
+	{
+		LOGE(TEXT("%s: Auth_RemoveItem failed because requested quantity %d exceeds owned quantity %d for %s %s."),
+			*GetNameSafe(this), Quantity, CurrentQuantity, *GetItemTypeName(ItemType), *ItemTag.ToString());
 		return false;
+	}
 
 	OutRemovedQuantity = InventoryList.RemoveQuantity(ItemType, ItemTag, Quantity);
-	ensureMsgf(OutRemovedQuantity == Quantity,
-	           TEXT("%s: TryRemoveItem removed %d of %d for %s %s. Inventory data may be inconsistent."),
-	           *GetNameSafe(this), OutRemovedQuantity, Quantity, *GetItemTypeName(ItemType), *ItemTag.ToString());
+	if (!(OutRemovedQuantity == Quantity))
+	{
+		LOGE(TEXT("%s: Auth_RemoveItem removed %d of %d for %s %s. Inventory data may be inconsistent."),
+			*GetNameSafe(this), OutRemovedQuantity, Quantity, *GetItemTypeName(ItemType), *ItemTag.ToString());
+	}
 
 	RecalculateCurrentWeight();
 	BroadcastInventoryChanged();
@@ -138,23 +159,23 @@ bool UBG_InventoryComponent::TryRemoveItem(EBG_ItemType ItemType, FGameplayTag I
 	return OutRemovedQuantity > 0;
 }
 
-void UBG_InventoryComponent::RequestDropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity)
+void UBG_InventoryComponent::DropItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity)
 {
 	const AActor* Owner = GetOwner();
 	if (Owner && Owner->HasAuthority())
 	{
 		EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
-		if (!TryDropItem(ItemType, ItemTag, Quantity, FailReason))
+		if (!Auth_DropItem(ItemType, ItemTag, Quantity, FailReason))
 		{
 			NotifyInventoryFailure(FailReason, ItemType, ItemTag);
 		}
 		return;
 	}
 
-	Server_RequestDropItem(ItemType, ItemTag, Quantity);
+	Server_DropItem(ItemType, ItemTag, Quantity);
 }
 
-bool UBG_InventoryComponent::TryDropItem(
+bool UBG_InventoryComponent::Auth_DropItem(
 	EBG_ItemType ItemType,
 	FGameplayTag ItemTag,
 	int32 Quantity,
@@ -162,53 +183,20 @@ bool UBG_InventoryComponent::TryDropItem(
 {
 	OutFailReason = EBGInventoryFailReason::ServerRejected;
 
-	if (!CanMutateInventoryState(TEXT("TryDropItem")))
+	if (!CanMutateInventoryState(TEXT("Auth_DropItem")))
 		return false;
 
-	if (!ensureMsgf(Quantity > 0, TEXT("%s: TryDropItem failed because quantity %d was not positive."),
-	                *GetNameSafe(this), Quantity))
-	{
-		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
+	if (!CanDropItem(ItemType, ItemTag, Quantity, OutFailReason))
 		return false;
-	}
-
-	if (!ensureMsgf(IsRegularInventoryItemType(ItemType),
-	                TEXT("%s: TryDropItem failed because item type %s is not stored in regular inventory."),
-	                *GetNameSafe(this), *GetItemTypeName(ItemType)))
-	{
-		OutFailReason = EBGInventoryFailReason::InvalidItem;
-		return false;
-	}
-
-	if (!ensureMsgf(ItemTag.IsValid(), TEXT("%s: TryDropItem failed because ItemTag was invalid for item type %s."),
-	                *GetNameSafe(this), *GetItemTypeName(ItemType)))
-	{
-		OutFailReason = EBGInventoryFailReason::InvalidItem;
-		return false;
-	}
-
-	if (!FindInventoryItemRow(ItemType, ItemTag, TEXT("TryDropItem")))
-	{
-		OutFailReason = EBGInventoryFailReason::InvalidItem;
-		return false;
-	}
-
-	const int32 CurrentQuantity = GetQuantity(ItemType, ItemTag);
-	if (!ensureMsgf(CurrentQuantity >= Quantity,
-	                TEXT("%s: TryDropItem failed because requested quantity %d exceeds owned quantity %d for %s %s."),
-	                *GetNameSafe(this), Quantity, CurrentQuantity, *GetItemTypeName(ItemType), *ItemTag.ToString()))
-	{
-		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
-		return false;
-	}
 
 	int32 RemovedQuantity = 0;
-	if (!ensureMsgf(TryRemoveItem(ItemType, ItemTag, Quantity, RemovedQuantity) && RemovedQuantity == Quantity,
-	                TEXT("%s: TryDropItem failed because TryRemoveItem removed %d of %d for %s %s."),
-	                *GetNameSafe(this), RemovedQuantity, Quantity, *GetItemTypeName(ItemType), *ItemTag.ToString()))
+	if (!(Auth_RemoveItem(ItemType, ItemTag, Quantity, RemovedQuantity) && RemovedQuantity == Quantity))
 	{
+		LOGE(TEXT("%s: Auth_DropItem failed because Auth_RemoveItem removed %d of %d for %s %s."),
+			*GetNameSafe(this), RemovedQuantity, Quantity, *GetItemTypeName(ItemType), *ItemTag.ToString());
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
+
 	}
 
 	ABG_WorldItemBase* SpawnedWorldItem = ABG_WorldItemBase::SpawnDroppedWorldItem(
@@ -218,13 +206,15 @@ bool UBG_InventoryComponent::TryDropItem(
 		ItemType,
 		ItemTag,
 		RemovedQuantity);
-	if (!ensureMsgf(SpawnedWorldItem, TEXT("%s: TryDropItem failed because world item spawn failed for %s %s."),
-	                *GetNameSafe(this), *GetItemTypeName(ItemType), *ItemTag.ToString()))
+	if (!SpawnedWorldItem)
 	{
+		LOGE(TEXT("%s: Auth_DropItem failed because world item spawn failed for %s %s."),
+			*GetNameSafe(this), *GetItemTypeName(ItemType), *ItemTag.ToString());
 		int32 RollbackAddedQuantity = 0;
-		TryAddItem(ItemType, ItemTag, RemovedQuantity, RollbackAddedQuantity);
+		Auth_AddItem(ItemType, ItemTag, RemovedQuantity, RollbackAddedQuantity);
 		OutFailReason = EBGInventoryFailReason::ServerRejected;
 		return false;
+
 	}
 
 	OutFailReason = EBGInventoryFailReason::None;
@@ -236,27 +226,37 @@ bool UBG_InventoryComponent::CanAddItem(EBG_ItemType ItemType, FGameplayTag Item
 {
 	OutAcceptedQuantity = 0;
 
-	if (!ensureMsgf(Quantity > 0, TEXT("%s: CanAddItem failed because quantity %d was not positive."),
-	                *GetNameSafe(this), Quantity))
+	if (!(Quantity > 0))
+	{
+		LOGE(TEXT("%s: CanAddItem failed because quantity %d was not positive."),
+			*GetNameSafe(this), Quantity);
 		return false;
+	}
 
 	const FBG_ItemDataRow* ItemRow = FindInventoryItemRow(ItemType, ItemTag, TEXT("CanAddItem"));
 	if (!ItemRow)
 		return false;
 
-	if (!ensureMsgf(ItemRow->bStackable, TEXT("%s: CanAddItem failed because item row %s is not stackable."),
-	                *GetNameSafe(this), *ItemTag.ToString()))
+	if (!ItemRow->bStackable)
+	{
+		LOGE(TEXT("%s: CanAddItem failed because item row %s is not stackable."),
+			*GetNameSafe(this), *ItemTag.ToString());
 		return false;
+	}
 
-	if (!ensureMsgf(ItemRow->MaxStackSize > 0,
-	                TEXT("%s: CanAddItem failed because item row %s has invalid MaxStackSize %d."),
-	                *GetNameSafe(this), *ItemTag.ToString(), ItemRow->MaxStackSize))
+	if (!(ItemRow->MaxStackSize > 0))
+	{
+		LOGE(TEXT("%s: CanAddItem failed because item row %s has invalid MaxStackSize %d."),
+			*GetNameSafe(this), *ItemTag.ToString(), ItemRow->MaxStackSize);
 		return false;
+	}
 
-	if (!ensureMsgf(ItemRow->UnitWeight >= 0.f,
-	                TEXT("%s: CanAddItem failed because item row %s has invalid UnitWeight %.2f."),
-	                *GetNameSafe(this), *ItemTag.ToString(), ItemRow->UnitWeight))
+	if (!(ItemRow->UnitWeight >= 0.f))
+	{
+		LOGE(TEXT("%s: CanAddItem failed because item row %s has invalid UnitWeight %.2f."),
+			*GetNameSafe(this), *ItemTag.ToString(), ItemRow->UnitWeight);
 		return false;
+	}
 
 	OutAcceptedQuantity = CalculateWeightLimitedQuantity(*ItemRow, Quantity);
 	if (OutAcceptedQuantity <= 0)
@@ -273,13 +273,13 @@ bool UBG_InventoryComponent::CanAddItem(EBG_ItemType ItemType, FGameplayTag Item
 	return true;
 }
 
-void UBG_InventoryComponent::Server_RequestDropItem_Implementation(
+void UBG_InventoryComponent::Server_DropItem_Implementation(
 	EBG_ItemType ItemType,
 	FGameplayTag ItemTag,
 	int32 Quantity)
 {
 	EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
-	if (!TryDropItem(ItemType, ItemTag, Quantity, FailReason))
+	if (!Auth_DropItem(ItemType, ItemTag, Quantity, FailReason))
 	{
 		NotifyInventoryFailure(FailReason, ItemType, ItemTag);
 	}
@@ -290,20 +290,22 @@ int32 UBG_InventoryComponent::GetQuantity(EBG_ItemType ItemType, FGameplayTag It
 	return InventoryList.GetQuantity(ItemType, ItemTag);
 }
 
-bool UBG_InventoryComponent::SetBackpackWeightBonus(float NewBackpackWeightBonus)
+bool UBG_InventoryComponent::Auth_SetBackpackBonus(float NewBackpackWeightBonus)
 {
-	if (!CanMutateInventoryState(TEXT("SetBackpackWeightBonus")))
+	if (!CanMutateInventoryState(TEXT("Auth_SetBackpackBonus")))
 		return false;
 
-	if (!ensureMsgf(NewBackpackWeightBonus >= 0.f,
-	                TEXT("%s: SetBackpackWeightBonus failed because NewBackpackWeightBonus %.2f was negative."),
-	                *GetNameSafe(this), NewBackpackWeightBonus))
+	if (!(NewBackpackWeightBonus >= 0.f))
+	{
+		LOGE(TEXT("%s: Auth_SetBackpackBonus failed because NewBackpackWeightBonus %.2f was negative."),
+			*GetNameSafe(this), NewBackpackWeightBonus);
 		return false;
+	}
 
 	const float NewMaxWeight = BaseMaxWeight + NewBackpackWeightBonus;
 	if (CurrentWeight > NewMaxWeight + KINDA_SMALL_NUMBER)
 	{
-		LOGW(TEXT("%s: SetBackpackWeightBonus rejected %.2f because CurrentWeight %.2f exceeds new MaxWeight %.2f."),
+		LOGW(TEXT("%s: Auth_SetBackpackBonus rejected %.2f because CurrentWeight %.2f exceeds new MaxWeight %.2f."),
 		     *GetNameSafe(this),
 		     NewBackpackWeightBonus,
 		     CurrentWeight,
@@ -325,12 +327,18 @@ TArray<FBG_InventoryEntry> UBG_InventoryComponent::GetInventoryEntries() const
 bool UBG_InventoryComponent::CanMutateInventoryState(const TCHAR* OperationName) const
 {
 	const AActor* Owner = GetOwner();
-	if (!ensureMsgf(IsValid(Owner), TEXT("%s: %s failed because owner was null."), *GetNameSafe(this), OperationName))
+	if (!IsValid(Owner))
+	{
+		LOGE(TEXT("%s: %s failed because owner was null."), *GetNameSafe(this), OperationName);
 		return false;
+	}
 
-	if (!ensureMsgf(Owner->HasAuthority(), TEXT("%s: %s failed because owner %s had no authority."),
-	                *GetNameSafe(this), OperationName, *GetNameSafe(Owner)))
+	if (!Owner->HasAuthority())
+	{
+		LOGE(TEXT("%s: %s failed because owner %s had no authority."),
+			*GetNameSafe(this), OperationName, *GetNameSafe(Owner));
 		return false;
+	}
 
 	return true;
 }
@@ -343,21 +351,79 @@ bool UBG_InventoryComponent::IsRegularInventoryItemType(EBG_ItemType ItemType) c
 		|| ItemType == EBG_ItemType::Throwable;
 }
 
+bool UBG_InventoryComponent::CanDropItem(
+	EBG_ItemType ItemType,
+	const FGameplayTag& ItemTag,
+	int32 Quantity,
+	EBGInventoryFailReason& OutFailReason) const
+{
+	if (Quantity <= 0)
+	{
+		LOGW(TEXT("%s: CanDropItem rejected quantity %d because it was not positive."),
+		     *GetNameSafe(this), Quantity);
+		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
+		return false;
+	}
+
+	if (!IsRegularInventoryItemType(ItemType))
+	{
+		LOGW(TEXT("%s: CanDropItem rejected item type %s because it is not stored in regular inventory."),
+		     *GetNameSafe(this), *GetItemTypeName(ItemType));
+		OutFailReason = EBGInventoryFailReason::InvalidItem;
+		return false;
+	}
+
+	if (!ItemTag.IsValid())
+	{
+		LOGW(TEXT("%s: CanDropItem rejected invalid ItemTag for item type %s."),
+		     *GetNameSafe(this), *GetItemTypeName(ItemType));
+		OutFailReason = EBGInventoryFailReason::InvalidItem;
+		return false;
+	}
+
+	if (!FindInventoryItemRow(ItemType, ItemTag, TEXT("CanDropItem")))
+	{
+		OutFailReason = EBGInventoryFailReason::InvalidItem;
+		return false;
+	}
+
+	const int32 CurrentQuantity = GetQuantity(ItemType, ItemTag);
+	if (CurrentQuantity < Quantity)
+	{
+		LOGW(TEXT("%s: CanDropItem rejected quantity %d because only %d is owned for %s %s."),
+		     *GetNameSafe(this), Quantity, CurrentQuantity, *GetItemTypeName(ItemType), *ItemTag.ToString());
+		OutFailReason = EBGInventoryFailReason::InvalidQuantity;
+		return false;
+	}
+
+	OutFailReason = EBGInventoryFailReason::None;
+	return true;
+}
+
 UBG_ItemDataRegistrySubsystem* UBG_InventoryComponent::GetItemDataRegistrySubsystem(const TCHAR* OperationName) const
 {
 	const UWorld* World = GetWorld();
-	if (!ensureMsgf(World, TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName))
+	if (!World)
+	{
+		LOGE(TEXT("%s: %s failed because World was null."), *GetNameSafe(this), OperationName);
 		return nullptr;
+	}
 
 	UGameInstance* GameInstance = World->GetGameInstance();
-	if (!ensureMsgf(GameInstance, TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this),
-	                OperationName))
+	if (!GameInstance)
+	{
+		LOGE(TEXT("%s: %s failed because GameInstance was null."), *GetNameSafe(this),
+			OperationName);
 		return nullptr;
+	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GameInstance->GetSubsystem<UBG_ItemDataRegistrySubsystem>();
-	if (!ensureMsgf(RegistrySubsystem, TEXT("%s: %s failed because UBG_ItemDataRegistrySubsystem was null."),
-	                *GetNameSafe(this), OperationName))
+	if (!RegistrySubsystem)
+	{
+		LOGE(TEXT("%s: %s failed because UBG_ItemDataRegistrySubsystem was null."),
+			*GetNameSafe(this), OperationName);
 		return nullptr;
+	}
 
 	return RegistrySubsystem;
 }
@@ -366,14 +432,19 @@ const FBG_ItemDataRow* UBG_InventoryComponent::FindInventoryItemRow(
 	EBG_ItemType ItemType, const FGameplayTag& ItemTag,
 	const TCHAR* OperationName) const
 {
-	if (!ensureMsgf(IsRegularInventoryItemType(ItemType),
-	                TEXT("%s: %s failed because item type %s is not stored in regular inventory."),
-	                *GetNameSafe(this), OperationName, *GetItemTypeName(ItemType)))
+	if (!IsRegularInventoryItemType(ItemType))
+	{
+		LOGE(TEXT("%s: %s failed because item type %s is not stored in regular inventory."),
+			*GetNameSafe(this), OperationName, *GetItemTypeName(ItemType));
 		return nullptr;
+	}
 
-	if (!ensureMsgf(ItemTag.IsValid(), TEXT("%s: %s failed because ItemTag was invalid for item type %s."),
-	                *GetNameSafe(this), OperationName, *GetItemTypeName(ItemType)))
+	if (!ItemTag.IsValid())
+	{
+		LOGE(TEXT("%s: %s failed because ItemTag was invalid for item type %s."),
+			*GetNameSafe(this), OperationName, *GetItemTypeName(ItemType));
 		return nullptr;
+	}
 
 	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GetItemDataRegistrySubsystem(OperationName);
 	if (!RegistrySubsystem)
@@ -405,13 +476,15 @@ void UBG_InventoryComponent::RecalculateCurrentWeight()
 	float NewCurrentWeight = 0.f;
 	for (const FBG_InventoryEntry& Entry : InventoryList.GetEntries())
 	{
-		if (!ensureMsgf(Entry.IsValidEntry(),
-		                TEXT(
-			                "%s: RecalculateCurrentWeight found invalid inventory entry. ItemType=%s, ItemTag=%s, Quantity=%d."
-		                ),
-		                *GetNameSafe(this), *GetItemTypeName(Entry.ItemType), *Entry.ItemTag.ToString(),
-		                Entry.Quantity))
+		if (!Entry.IsValidEntry())
+		{
+			LOGE(TEXT(
+				"%s: RecalculateCurrentWeight found invalid inventory entry. ItemType=%s, ItemTag=%s, Quantity=%d."
+				),
+				*GetNameSafe(this), *GetItemTypeName(Entry.ItemType), *Entry.ItemTag.ToString(),
+				Entry.Quantity);
 			continue;
+		}
 
 		const FBG_ItemDataRow* ItemRow = FindInventoryItemRow(Entry.ItemType, Entry.ItemTag,
 		                                                      TEXT("RecalculateCurrentWeight"));
@@ -427,8 +500,11 @@ void UBG_InventoryComponent::RecalculateCurrentWeight()
 FTransform UBG_InventoryComponent::BuildDropTransform() const
 {
 	const AActor* Owner = GetOwner();
-	if (!ensureMsgf(IsValid(Owner), TEXT("%s: BuildDropTransform failed because owner was null."), *GetNameSafe(this)))
+	if (!IsValid(Owner))
+	{
+		LOGE(TEXT("%s: BuildDropTransform failed because owner was null."), *GetNameSafe(this));
 		return FTransform::Identity;
+	}
 
 	const FVector DropLocation = Owner->GetActorLocation()
 		+ Owner->GetActorForwardVector() * 120.f
@@ -443,10 +519,12 @@ void UBG_InventoryComponent::NotifyInventoryFailure(
 	const FGameplayTag& ItemTag) const
 {
 	ABG_Character* OwnerCharacter = Cast<ABG_Character>(GetOwner());
-	if (!ensureMsgf(OwnerCharacter,
-	                TEXT("%s: NotifyInventoryFailure failed because owner was not ABG_Character. FailReason=%d"),
-	                *GetNameSafe(this), static_cast<int32>(FailReason)))
+	if (!OwnerCharacter)
+	{
+		LOGE(TEXT("%s: NotifyInventoryFailure failed because owner was not ABG_Character. FailReason=%d"),
+			*GetNameSafe(this), static_cast<int32>(FailReason));
 		return;
+	}
 
 	OwnerCharacter->Client_ReceiveInventoryFailure(FailReason, ItemType, ItemTag);
 }

@@ -40,19 +40,19 @@ bool ResolveEquippedMeshSocketTransform(
 	if (!EquippedMeshComponent)
 	{
 		LOGE(TEXT("%s: %s failed because EquippedMeshComponent was null for socket %s."),
-		     *GetNameSafe(WeaponActor),
-		     OperationName,
-		     *SocketName.ToString());
+			*GetNameSafe(WeaponActor),
+			OperationName,
+			*SocketName.ToString());
 		return false;
 	}
 
 	if (!EquippedMeshComponent->DoesSocketExist(SocketName))
 	{
 		LOGE(TEXT("%s: %s failed because socket %s does not exist on %s."),
-		     *GetNameSafe(WeaponActor),
-		     OperationName,
-		     *SocketName.ToString(),
-		     *GetNameSafe(EquippedMeshComponent));
+			*GetNameSafe(WeaponActor),
+			OperationName,
+			*SocketName.ToString(),
+			*GetNameSafe(EquippedMeshComponent));
 		return false;
 	}
 
@@ -72,10 +72,12 @@ bool ABG_EquippedWeaponBase::InitializeEquippedWeapon(ABG_Character* NewOwningCh
 
 bool ABG_EquippedWeaponBase::SetOwningCharacter(ABG_Character* NewOwningCharacter)
 {
-	if (!ensureMsgf(IsValid(NewOwningCharacter),
-	                TEXT("%s: SetOwningCharacter failed because NewOwningCharacter was null or invalid."),
-	                *GetNameSafe(this)))
+	if (!IsValid(NewOwningCharacter))
+	{
+		LOGE(TEXT("%s: SetOwningCharacter failed because NewOwningCharacter was null or invalid."),
+			*GetNameSafe(this));
 		return false;
+	}
 
 	OwningCharacter = NewOwningCharacter;
 	SetOwner(NewOwningCharacter);

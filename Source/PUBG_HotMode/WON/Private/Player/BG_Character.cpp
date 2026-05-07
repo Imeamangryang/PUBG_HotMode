@@ -783,7 +783,7 @@ FName ABG_Character::GetDesiredWeaponSocketName(EBG_EquipmentSlot WeaponSlot) co
 	return WeaponBackSocketName;
 }
 
-void ABG_Character::RequestPickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity)
+void ABG_Character::PickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity)
 {
 	if (HasAuthority())
 	{
@@ -801,10 +801,21 @@ void ABG_Character::RequestPickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Q
 		return;
 	}
 
-	Server_RequestPickupWorldItem(WorldItem, Quantity);
+	Server_PickupWorldItem(WorldItem, Quantity);
 }
 
-void ABG_Character::Server_RequestPickupWorldItem_Implementation(
+void ABG_Character::UseInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag)
+{
+	if (!ensureMsgf(ItemUseComponent, TEXT("%s: UseInventoryItem failed because ItemUseComponent was null."),
+	                *GetNameSafe(this)))
+	{
+		return;
+	}
+
+	ItemUseComponent->UseItem(ItemType, ItemTag);
+}
+
+void ABG_Character::Server_PickupWorldItem_Implementation(
 	ABG_WorldItemBase* WorldItem,
 	int32 Quantity)
 {
@@ -972,7 +983,7 @@ void ABG_Character::TryInteractWithCurrentTarget()
 	{
 		if (ABG_WorldItemBase* WorldItem = Cast<ABG_WorldItemBase>(CurrentInteractableWeapon))
 		{
-			RequestPickupWorldItem(WorldItem, WorldItem->GetQuantity());
+			PickupWorldItem(WorldItem, WorldItem->GetQuantity());
 			return;
 		}
 

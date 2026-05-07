@@ -222,24 +222,24 @@ public: // --- Possession Binding ---
 	UFUNCTION(BlueprintCallable, Category="Inventory UI")
 	void NotifyPossessedCharacterCleared();
 
-public: // --- Requests ---
-	UFUNCTION(BlueprintCallable, Category="Inventory UI|Request")
-	bool RequestPickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity);
+public: // --- Commands ---
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool PickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity);
 
-	UFUNCTION(BlueprintCallable, Category="Inventory UI|Request")
-	bool RequestPickupNearbyWorldItem(int32 Quantity);
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool PickupNearbyWorldItem(int32 Quantity);
 
-	UFUNCTION(BlueprintCallable, Category="Inventory UI|Request")
-	bool RequestDropInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool DropInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
 
-	UFUNCTION(BlueprintCallable, Category="Inventory UI|Request")
-	bool RequestDropEquipment(EBG_EquipmentSlot EquipmentSlot);
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool DropEquipment(EBG_EquipmentSlot EquipmentSlot);
 
-	UFUNCTION(BlueprintCallable, Category="Inventory UI|Request")
-	bool RequestUseInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag);
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool UseInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag);
 
-	UFUNCTION(BlueprintCallable, Category="Inventory UI|Request")
-	bool RequestCancelItemUse();
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool CancelItemUse();
 
 public: // --- Failure Feedback ---
 	UFUNCTION(BlueprintCallable, Category="Inventory UI")

@@ -12,6 +12,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "TimerManager.h"
 
+
 DEFINE_LOG_CATEGORY_STATIC(LogBGWeaponFire, Log, All);
 
 UBG_WeaponFireComponent::UBG_WeaponFireComponent()
@@ -366,7 +367,7 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 		const EBG_EquipmentSlot ActiveWeaponSlot = EquipmentComponent->GetActiveWeaponSlot();
 		if (ActiveWeaponSlot != EBG_EquipmentSlot::None)
 		{
-			EquipmentComponent->TryLoadAmmo(ActiveWeaponSlot, CurrentMagazineAmmo);
+			//EquipmentComponent->TryLoadAmmo(ActiveWeaponSlot, CurrentMagazineAmmo);
 		}
 	}
 
@@ -703,6 +704,35 @@ UBG_ItemDataRegistrySubsystem* UBG_WeaponFireComponent::GetItemDataRegistrySubsy
 	return RegistrySubsystem;
 }
 
+const FBG_WeaponFireSpecRow* UBG_WeaponFireComponent::GetActiveWeaponFireSpecRow(const TCHAR* OperationName) const
+{
+	FGameplayTag WeaponItemTag;
+	const FBG_WeaponItemDataRow* WeaponRow = nullptr;
+	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
+	if (!GetActiveWeaponContext(WeaponItemTag, WeaponRow, WeaponSlot, OperationName))
+	{
+		return nullptr;
+	}
+
+	UBG_ItemDataRegistrySubsystem* RegistrySubsystem = GetItemDataRegistrySubsystem(OperationName);
+	if (!RegistrySubsystem)
+	{
+		return nullptr;
+	}
+
+	const FBG_WeaponFireSpecRow* FireSpecRow = RegistrySubsystem->FindWeaponFireSpecRow(WeaponItemTag);
+	if (!FireSpecRow)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because weapon fire spec row was not found for %s."),
+			*GetNameSafe(this),
+			OperationName,
+			*WeaponItemTag.ToString());
+		return nullptr;
+	}
+
+	return FireSpecRow;
+}
+
 const FBG_WeaponItemDataRow* UBG_WeaponFireComponent::GetActiveWeaponItemRow(const TCHAR* OperationName) const
 {
 	FGameplayTag WeaponItemTag;
@@ -976,22 +1006,22 @@ void UBG_WeaponFireComponent::CompleteReload()
 		}
 		return;
 	}
-
-	int32 RemovedAmmo = 0;
-	if (!InventoryComponent->TryRemoveItem(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag, AmmoNeeded, RemovedAmmo) || RemovedAmmo <= 0)
-	{
-		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CompleteReload could not remove ammo from inventory for %s. Falling back to code-only reload."), *GetNameSafe(this), *WeaponRow->AmmoItemTag.ToString());
-		const int32 CodeOnlyAmmo = AmmoNeeded;
-		EquipmentComponent->TryLoadAmmo(WeaponSlot, CurrentLoadedAmmo + CodeOnlyAmmo);
-		SyncAmmoFromEquipment();
-		if (CachedCharacter)
-		{
-			CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
-		}
-		return;
-	}
-
-	EquipmentComponent->TryLoadAmmo(WeaponSlot, CurrentLoadedAmmo + RemovedAmmo);
+	//
+	// int32 RemovedAmmo = 0;
+	// if (!InventoryComponent->TryRemoveItem(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag, AmmoNeeded, RemovedAmmo) || RemovedAmmo <= 0)
+	// {
+	// 	UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CompleteReload could not remove ammo from inventory for %s. Falling back to code-only reload."), *GetNameSafe(this), *WeaponRow->AmmoItemTag.ToString());
+	// 	const int32 CodeOnlyAmmo = AmmoNeeded;
+	// 	EquipmentComponent->TryLoadAmmo(WeaponSlot, CurrentLoadedAmmo + CodeOnlyAmmo);
+	// 	SyncAmmoFromEquipment();
+	// 	if (CachedCharacter)
+	// 	{
+	// 		CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
+	// 	}
+	// 	return;
+	// }
+	//
+	// EquipmentComponent->TryLoadAmmo(WeaponSlot, CurrentLoadedAmmo + RemovedAmmo);
 	SyncAmmoFromEquipment();
 
 	if (CachedCharacter)
@@ -1089,6 +1119,26 @@ const FBGWeaponAmmoSettings* UBG_WeaponFireComponent::ResolveAmmoSettings(EBGWea
 
 EBGWeaponFireMode UBG_WeaponFireComponent::ResolveFireMode(EBGWeaponPoseType WeaponPoseType) const
 {
+	if (const FBG_WeaponFireSpecRow* FireSpecRow = GetActiveWeaponFireSpecRow(TEXT("ResolveFireMode")))
+	{
+		switch (FireSpecRow->FireMode)
+		{
+		case EBG_WeaponFireMode::FullAuto:
+			return EBGWeaponFireMode::FullAuto;
+		case EBG_WeaponFireMode::SemiAuto:
+		case EBG_WeaponFireMode::BoltAction:
+		case EBG_WeaponFireMode::Melee:
+			return EBGWeaponFireMode::SemiAuto;
+		case EBG_WeaponFireMode::None:
+		default:
+			UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ResolveFireMode received invalid fire mode %s for weapon %s. Falling back to pose-based mode."),
+				*GetNameSafe(this),
+				*UEnum::GetValueAsString(FireSpecRow->FireMode),
+				*FireSpecRow->WeaponItemTag.ToString());
+			break;
+		}
+	}
+
 	switch (WeaponPoseType)
 	{
 	case EBGWeaponPoseType::Rifle:

@@ -12,6 +12,7 @@ class UBG_EquipmentComponent;
 class UBG_InventoryComponent;
 class UBG_ItemDataRegistrySubsystem;
 class UCameraShakeBase;
+struct FBG_WeaponFireSpecRow;
 struct FBG_WeaponItemDataRow;
 enum class EBG_EquipmentSlot : uint8;
 
@@ -170,6 +171,7 @@ private:
 	UBG_EquipmentComponent* GetEquipmentComponent(const TCHAR* OperationName) const;
 	UBG_InventoryComponent* GetInventoryComponent(const TCHAR* OperationName) const;
 	UBG_ItemDataRegistrySubsystem* GetItemDataRegistrySubsystem(const TCHAR* OperationName) const;
+	const FBG_WeaponFireSpecRow* GetActiveWeaponFireSpecRow(const TCHAR* OperationName) const;
 	const FBG_WeaponItemDataRow* GetActiveWeaponItemRow(const TCHAR* OperationName) const;
 	bool GetActiveWeaponContext(FGameplayTag& OutWeaponItemTag, const FBG_WeaponItemDataRow*& OutWeaponRow,
 	                            EBG_EquipmentSlot& OutWeaponSlot, const TCHAR* OperationName) const;
