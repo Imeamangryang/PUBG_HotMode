@@ -1,6 +1,7 @@
 #include "Combat/BG_WeaponFireComponent.h"
 
 #include "Combat/BG_DamageSystem.h"
+#include "Combat/BG_EquippedWeaponBase.h"
 #include "Inventory/BG_EquipmentComponent.h"
 #include "Inventory/BG_InventoryComponent.h"
 #include "Inventory/BG_ItemDataRegistrySubsystem.h"
@@ -40,6 +41,12 @@ UBG_WeaponFireComponent::UBG_WeaponFireComponent()
 	ShotgunFireSettings.PelletCount = 8;
 	ShotgunFireSettings.SpreadAngleDegrees = 6.0f;
 
+	SniperFireSettings.Damage = 95.f;
+	SniperFireSettings.Range = 12000.f;
+	SniperFireSettings.FireCooldown = 1.25f;
+	SniperFireSettings.PelletCount = 1;
+	SniperFireSettings.SpreadAngleDegrees = 0.02f;
+
 	PistolAmmoSettings.MaxMagazineAmmo = 12;
 	PistolAmmoSettings.MaxReserveAmmo = 48;
 
@@ -48,6 +55,9 @@ UBG_WeaponFireComponent::UBG_WeaponFireComponent()
 
 	ShotgunAmmoSettings.MaxMagazineAmmo = 8;
 	ShotgunAmmoSettings.MaxReserveAmmo = 24;
+
+	SniperAmmoSettings.MaxMagazineAmmo = 5;
+	SniperAmmoSettings.MaxReserveAmmo = 25;
 }
 
 void UBG_WeaponFireComponent::BeginPlay()
@@ -166,12 +176,18 @@ bool UBG_WeaponFireComponent::CanFireWeapon() const
 		return false;
 	}
 
+	const ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("CanFireWeapon"));
+	if (!EquippedWeapon)
+	{
+		return false;
+	}
+
 	const EBGWeaponPoseType WeaponPoseType = CachedCharacter->GetEquippedWeaponPoseType();
 	return CachedCharacter->IsWeaponEquipped()
 		&& CachedCharacter->CanFire()
 		&& WeaponPoseType != EBGWeaponPoseType::None
 		&& ResolveFireSettings(WeaponPoseType) != nullptr
-		&& CurrentMagazineAmmo > 0;
+		&& EquippedWeapon->CanFire();
 }
 
 bool UBG_WeaponFireComponent::CanReloadWeapon() const
@@ -185,42 +201,25 @@ bool UBG_WeaponFireComponent::CanReloadWeapon() const
 		return false;
 	}
 
+	const ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("CanReloadWeapon"));
+	if (!EquippedWeapon)
+	{
+		return false;
+	}
+
 	FGameplayTag WeaponItemTag;
 	const FBG_WeaponItemDataRow* WeaponRow = nullptr;
 	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
 	if (!GetActiveWeaponContext(WeaponItemTag, WeaponRow, WeaponSlot, TEXT("CanReloadWeapon")) || !WeaponRow)
 	{
-		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon fallback because active weapon context or row was missing. CurrentWeaponPoseType=%s, CurrentMagazineAmmo=%d, CurrentMaxMagazineAmmo=%d"),
-			*GetNameSafe(this), *UEnum::GetValueAsString(CurrentWeaponPoseType), CurrentMagazineAmmo, CurrentMaxMagazineAmmo);
-		return CurrentWeaponPoseType != EBGWeaponPoseType::None
-			&& CurrentMagazineAmmo < CurrentMaxMagazineAmmo;
+		return EquippedWeapon->CanReloadWithInventoryAmmo(0);
 	}
 
-	if (CurrentMagazineAmmo >= WeaponRow->MagazineSize)
-	{
-		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon false because magazine is full. CurrentMagazineAmmo=%d, MagazineSize=%d"), *GetNameSafe(this), CurrentMagazineAmmo, WeaponRow->MagazineSize);
-		return false;
-	}
-
-	if (!WeaponRow->AmmoItemTag.IsValid())
-	{
-		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon allowed because AmmoItemTag is invalid for weapon %s and fallback reload is enabled."), *GetNameSafe(this), *WeaponItemTag.ToString());
-		return true;
-	}
-
-	if (const UBG_InventoryComponent* InventoryComponent = GetInventoryComponent(TEXT("CanReloadWeapon")))
-	{
-		const int32 AmmoCount = InventoryComponent->GetQuantity(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag);
-		if (AmmoCount <= 0)
-		{
-			UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon falling back to code-only reload because inventory has no ammo. AmmoTag=%s"), *GetNameSafe(this), *WeaponRow->AmmoItemTag.ToString());
-			return true;
-		}
-		return AmmoCount > 0;
-	}
-
-	UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CanReloadWeapon allowed because inventory component was missing and fallback reload is enabled."), *GetNameSafe(this));
-	return true;
+	const UBG_InventoryComponent* InventoryComponent = GetInventoryComponent(TEXT("CanReloadWeapon"));
+	const int32 InventoryAmmoCount = (InventoryComponent && WeaponRow->AmmoItemTag.IsValid())
+		? InventoryComponent->GetQuantity(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag)
+		: 0;
+	return EquippedWeapon->CanReloadWithInventoryAmmo(InventoryAmmoCount);
 }
 
 float UBG_WeaponFireComponent::GetTimeSinceLastFireAnimation() const
@@ -328,6 +327,12 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 	}
 
 	const EBGWeaponPoseType WeaponPoseType = CachedCharacter->GetEquippedWeaponPoseType();
+	ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("ExecuteFire"));
+	if (!EquippedWeapon)
+	{
+		return false;
+	}
+
 	const FBGWeaponFireSettings* FireSettings = ResolveFireSettings(WeaponPoseType);
 	if (!FireSettings)
 	{
@@ -354,7 +359,14 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 		return false;
 	}
 
-	if (!ConsumeAmmo(1))
+	// Weapon actor owns the authoritative loaded-ammo state, while this component only drives effects and input timing.
+	int32 AmmoCost = 1;
+	if (const FBG_WeaponFireSpecRow* FireSpecRow = GetActiveWeaponFireSpecRow(TEXT("ExecuteFire")))
+	{
+		AmmoCost = FMath::Max(1, FireSpecRow->AmmoCost);
+	}
+
+	if (!EquippedWeapon->ConsumeLoadedAmmo(AmmoCost))
 	{
 		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ExecuteFire failed because ammo was empty. Pose=%s"), *GetNameSafe(this), *UEnum::GetValueAsString(WeaponPoseType));
 		return false;
@@ -367,7 +379,7 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 		const EBG_EquipmentSlot ActiveWeaponSlot = EquipmentComponent->GetActiveWeaponSlot();
 		if (ActiveWeaponSlot != EBG_EquipmentSlot::None)
 		{
-			//EquipmentComponent->TryLoadAmmo(ActiveWeaponSlot, CurrentMagazineAmmo);
+			EquipmentComponent->Auth_LoadAmmo(ActiveWeaponSlot, EquippedWeapon->GetLoadedAmmo());
 		}
 	}
 
@@ -377,6 +389,12 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 
 	const FVector ShotStart = ViewLocation;
 	const FVector BaseShotDirection = ViewRotation.Vector();
+
+	FTransform MuzzleTransform;
+	if (EquippedWeapon->GetMuzzleTransform(MuzzleTransform))
+	{
+		EquippedWeapon->NotifyFireTriggered(MuzzleTransform, FireAnimationSequence + 1);
+	}
 
 	const float RecoilPitchOffset = FireSettings->RecoilPitchDegrees > 0.f
 		? FMath::RandRange(0.0f, FireSettings->RecoilPitchDegrees)
@@ -399,6 +417,7 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 	const int32 PelletCount = FMath::Max(1, FireSettings->PelletCount);
 	for (int32 PelletIndex = 0; PelletIndex < PelletCount; ++PelletIndex)
 	{
+		// This temporary debug path keeps hitscan firing enabled until projectile-based weapon actors are introduced.
 		const float SpreadRadians = FMath::DegreesToRadians(FireSettings->SpreadAngleDegrees);
 		const FVector ShotDirection = SpreadRadians > 0.f
 			? FMath::VRandCone(RecoiledBaseDirection, SpreadRadians)
@@ -417,6 +436,7 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 
 	PlayWeaponFireAnimation(WeaponPoseType);
 	MarkFireAnimationTriggered();
+	SyncAmmoFromEquipment();
 	BroadcastAmmoState();
 	return true;
 }
@@ -517,6 +537,9 @@ void UBG_WeaponFireComponent::PlayWeaponFireAnimation(EBGWeaponPoseType WeaponPo
 		break;
 	case EBGWeaponPoseType::Shotgun:
 		MontageToPlay = ShotgunFireMontage;
+		break;
+	case EBGWeaponPoseType::Sniper:
+		MontageToPlay = SniperFireMontage;
 		break;
 	default:
 		break;
@@ -678,6 +701,24 @@ UBG_InventoryComponent* UBG_WeaponFireComponent::GetInventoryComponent(const TCH
 	return InventoryComponent;
 }
 
+ABG_EquippedWeaponBase* UBG_WeaponFireComponent::GetActiveEquippedWeapon(const TCHAR* OperationName) const
+{
+	UBG_EquipmentComponent* EquipmentComponent = GetEquipmentComponent(OperationName);
+	if (!EquipmentComponent)
+	{
+		return nullptr;
+	}
+
+	ABG_EquippedWeaponBase* EquippedWeapon = EquipmentComponent->GetActiveEquippedWeaponActor();
+	if (!EquippedWeapon)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: %s failed because active EquippedWeapon was null."), *GetNameSafe(this), OperationName);
+		return nullptr;
+	}
+
+	return EquippedWeapon;
+}
+
 UBG_ItemDataRegistrySubsystem* UBG_WeaponFireComponent::GetItemDataRegistrySubsystem(const TCHAR* OperationName) const
 {
 	const UWorld* World = GetWorld();
@@ -789,6 +830,16 @@ bool UBG_WeaponFireComponent::GetActiveWeaponContext(
 
 void UBG_WeaponFireComponent::SyncAmmoFromEquipment()
 {
+	if (ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("SyncAmmoFromEquipment")))
+	{
+		CurrentWeaponPoseType = EquippedWeapon->GetWeaponPoseType();
+		CurrentMaxMagazineAmmo = EquippedWeapon->GetMagazineCapacity();
+		CurrentMagazineAmmo = EquippedWeapon->GetLoadedAmmo();
+		RefreshReserveAmmo();
+		BroadcastAmmoState();
+		return;
+	}
+
 	FGameplayTag WeaponItemTag;
 	const FBG_WeaponItemDataRow* WeaponRow = nullptr;
 	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
@@ -810,6 +861,16 @@ void UBG_WeaponFireComponent::SyncAmmoFromEquipment()
 
 void UBG_WeaponFireComponent::RefreshReserveAmmo()
 {
+	if (const ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("RefreshReserveAmmo")))
+	{
+		if (EquippedWeapon->UsesInfiniteDebugAmmo())
+		{
+			// Comment out this block later when reserve ammo should come only from the replicated inventory count.
+			CurrentReserveAmmo = 999;
+			return;
+		}
+	}
+
 	const FBG_WeaponItemDataRow* WeaponRow = GetActiveWeaponItemRow(TEXT("RefreshReserveAmmo"));
 	if (!WeaponRow || !WeaponRow->AmmoItemTag.IsValid())
 	{
@@ -953,9 +1014,16 @@ bool UBG_WeaponFireComponent::TryStartReload()
 		return TryStartTemporaryReload();
 	}
 
+	ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("TryStartReload"));
+	if (!EquippedWeapon || !EquippedWeapon->BeginWeaponReload())
+	{
+		return false;
+	}
+
 	bIsHoldingFireInput = false;
 	StopAutomaticFire();
 	CachedCharacter->StartTimedCharacterState(EBGCharacterState::Reloading, WeaponRow->ReloadDuration);
+	EquippedWeapon->NotifyReloadStarted(WeaponRow->ReloadDuration);
 	Multicast_PlayReloadAnimation(CachedCharacter->GetEquippedWeaponPoseType());
 
 	if (UWorld* World = GetWorld())
@@ -994,11 +1062,20 @@ void UBG_WeaponFireComponent::CompleteReload()
 		return;
 	}
 
-	const int32 MagazineSize = FMath::Max(0, WeaponRow->MagazineSize);
-	const int32 CurrentLoadedAmmo = FMath::Clamp(EquipmentComponent->GetLoadedAmmo(WeaponSlot), 0, MagazineSize);
-	const int32 AmmoNeeded = MagazineSize - CurrentLoadedAmmo;
-	if (AmmoNeeded <= 0)
+	ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("CompleteReload"));
+	if (!EquippedWeapon)
 	{
+		CancelReload();
+		return;
+	}
+
+	const int32 InventoryAmmoCount = WeaponRow->AmmoItemTag.IsValid()
+		? FMath::Max(0, InventoryComponent->GetQuantity(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag))
+		: 0;
+	const int32 AmmoToLoad = EquippedWeapon->ResolveReloadAmount(InventoryAmmoCount);
+	if (AmmoToLoad <= 0)
+	{
+		EquippedWeapon->CancelWeaponReload();
 		SyncAmmoFromEquipment();
 		if (CachedCharacter)
 		{
@@ -1006,22 +1083,29 @@ void UBG_WeaponFireComponent::CompleteReload()
 		}
 		return;
 	}
-	//
-	// int32 RemovedAmmo = 0;
-	// if (!InventoryComponent->TryRemoveItem(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag, AmmoNeeded, RemovedAmmo) || RemovedAmmo <= 0)
-	// {
-	// 	UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CompleteReload could not remove ammo from inventory for %s. Falling back to code-only reload."), *GetNameSafe(this), *WeaponRow->AmmoItemTag.ToString());
-	// 	const int32 CodeOnlyAmmo = AmmoNeeded;
-	// 	EquipmentComponent->TryLoadAmmo(WeaponSlot, CurrentLoadedAmmo + CodeOnlyAmmo);
-	// 	SyncAmmoFromEquipment();
-	// 	if (CachedCharacter)
-	// 	{
-	// 		CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
-	// 	}
-	// 	return;
-	// }
-	//
-	// EquipmentComponent->TryLoadAmmo(WeaponSlot, CurrentLoadedAmmo + RemovedAmmo);
+
+	// Reload still starts from controller input, but the server resolves the final ammo amount through the weapon actor.
+	int32 ConsumedInventoryAmmo = 0;
+	if (!EquippedWeapon->UsesInfiniteDebugAmmo() && WeaponRow->AmmoItemTag.IsValid())
+	{
+		// Comment out this block later when inventory ammo should no longer be consumed through the debug reload path.
+		if (!InventoryComponent->Auth_RemoveItem(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag, AmmoToLoad, ConsumedInventoryAmmo)
+			|| ConsumedInventoryAmmo <= 0)
+		{
+			UE_LOG(LogBGWeaponFire, Error, TEXT("%s: CompleteReload failed because ammo removal from inventory did not succeed for %s."), *GetNameSafe(this), *WeaponRow->AmmoItemTag.ToString());
+			EquippedWeapon->CancelWeaponReload();
+			CancelReload();
+			return;
+		}
+	}
+	else
+	{
+		ConsumedInventoryAmmo = AmmoToLoad;
+	}
+
+	EquippedWeapon->FinishWeaponReload(ConsumedInventoryAmmo);
+	EquippedWeapon->NotifyReloadFinished(true);
+	EquipmentComponent->Auth_LoadAmmo(WeaponSlot, EquippedWeapon->GetLoadedAmmo());
 	SyncAmmoFromEquipment();
 
 	if (CachedCharacter)
@@ -1035,6 +1119,12 @@ void UBG_WeaponFireComponent::CancelReload()
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
+	}
+
+	if (ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("CancelReload")))
+	{
+		EquippedWeapon->CancelWeaponReload();
+		EquippedWeapon->NotifyReloadFinished(false);
 	}
 
 	if (CachedCharacter)
@@ -1069,6 +1159,9 @@ void UBG_WeaponFireComponent::PlayReloadAnimation(EBGWeaponPoseType WeaponPoseTy
 	case EBGWeaponPoseType::Shotgun:
 		MontageToPlay = ShotgunReloadMontage;
 		break;
+	case EBGWeaponPoseType::Sniper:
+		MontageToPlay = SniperReloadMontage;
+		break;
 	default:
 		break;
 	}
@@ -1097,6 +1190,8 @@ const FBGWeaponFireSettings* UBG_WeaponFireComponent::ResolveFireSettings(EBGWea
 		return &RifleFireSettings;
 	case EBGWeaponPoseType::Shotgun:
 		return &ShotgunFireSettings;
+	case EBGWeaponPoseType::Sniper:
+		return &SniperFireSettings;
 	default:
 		return nullptr;
 	}
@@ -1112,6 +1207,8 @@ const FBGWeaponAmmoSettings* UBG_WeaponFireComponent::ResolveAmmoSettings(EBGWea
 		return &RifleAmmoSettings;
 	case EBGWeaponPoseType::Shotgun:
 		return &ShotgunAmmoSettings;
+	case EBGWeaponPoseType::Sniper:
+		return &SniperAmmoSettings;
 	default:
 		return nullptr;
 	}
@@ -1145,6 +1242,7 @@ EBGWeaponFireMode UBG_WeaponFireComponent::ResolveFireMode(EBGWeaponPoseType Wea
 		return EBGWeaponFireMode::FullAuto;
 	case EBGWeaponPoseType::Pistol:
 	case EBGWeaponPoseType::Shotgun:
+	case EBGWeaponPoseType::Sniper:
 	default:
 		return EBGWeaponFireMode::SemiAuto;
 	}

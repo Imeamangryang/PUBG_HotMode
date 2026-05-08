@@ -15,6 +15,26 @@
 #include "Player/BG_Character.h"
 #include "PUBG_HotMode/PUBG_HotMode.h"
 
+namespace
+{
+EBGWeaponPoseType ResolveCharacterWeaponPoseType(const FBG_WeaponItemDataRow& WeaponRow)
+{
+	switch (WeaponRow.WeaponPoseCategory)
+	{
+	case EBG_WeaponPoseCategory::Pistol:
+		return EBGWeaponPoseType::Pistol;
+	case EBG_WeaponPoseCategory::Rifle:
+		return EBGWeaponPoseType::Rifle;
+	case EBG_WeaponPoseCategory::Shotgun:
+		return EBGWeaponPoseType::Shotgun;
+	case EBG_WeaponPoseCategory::Sniper:
+		return EBGWeaponPoseType::Sniper;
+	default:
+		return EBGWeaponPoseType::None;
+	}
+}
+}
+
 UBG_EquipmentComponent::UBG_EquipmentComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
@@ -101,6 +121,12 @@ bool UBG_EquipmentComponent::Auth_EquipWeapon(EBG_EquipmentSlot WeaponSlot, FGam
 	ABG_EquippedWeaponBase* NewWeaponActor = nullptr;
 	if (!SpawnAndAttachEquippedWeaponActor(WeaponSlot, *WeaponRow, NewWeaponActor))
 		return false;
+
+	NewWeaponActor->ApplyWeaponRuntimeDefinition(
+		ResolveCharacterWeaponPoseType(*WeaponRow),
+		WeaponRow->AmmoItemTag,
+		WeaponRow->MagazineSize,
+		FMath::Clamp(LoadedAmmo, 0, FMath::Max(0, WeaponRow->MagazineSize)));
 
 	OutReplacedWeaponItemTag = GetEquippedItemTag(WeaponSlot);
 	OutReplacedLoadedAmmo = GetLoadedAmmo(WeaponSlot);
@@ -237,7 +263,25 @@ bool UBG_EquipmentComponent::Auth_LoadAmmo(EBG_EquipmentSlot WeaponSlot, int32 L
 	if (!WeaponRow)
 		return false;
 
-	SetLoadedAmmo(WeaponSlot, FMath::Clamp(LoadedAmmo, 0, FMath::Max(0, WeaponRow->MagazineSize)));
+	// Equipment keeps the replicated slot snapshot, but mirrors the same value back into the live weapon actor.
+	const int32 SafeLoadedAmmo = FMath::Clamp(LoadedAmmo, 0, FMath::Max(0, WeaponRow->MagazineSize));
+	SetLoadedAmmo(WeaponSlot, SafeLoadedAmmo);
+
+	if (ABG_EquippedWeaponBase* WeaponActor = GetEquippedWeaponActor(WeaponSlot))
+	{
+		WeaponActor->ApplyWeaponRuntimeDefinition(
+			ResolveCharacterWeaponPoseType(*WeaponRow),
+			WeaponRow->AmmoItemTag,
+			WeaponRow->MagazineSize,
+			SafeLoadedAmmo);
+	}
+	else
+	{
+		LOGE(TEXT("%s: Auth_LoadAmmo could not mirror loaded ammo because WeaponActor was null for slot %s."),
+			*GetNameSafe(this),
+			*GetEquipmentSlotName(WeaponSlot));
+	}
+
 	BroadcastEquipmentChanged();
 	ForceEquipmentNetUpdate();
 	return true;
@@ -1217,6 +1261,9 @@ bool UBG_EquipmentComponent::AttachEquippedWeaponActor(
 		                             ? WeaponActor->GetHandAttachTransform()
 		                             : WeaponActor->GetBackAttachTransform();
 
+	// Reserve weapons stay alive for ammo persistence and are hidden until they become active again.
+	WeaponActor->SetActorHiddenInGame(!bIsActiveSlot);
+
 	if (bIsActiveSlot && !WeaponActor->GetGripSocketName().IsNone())
 	{
 		FTransform GripWorldTransform;
@@ -1395,6 +1442,7 @@ void UBG_EquipmentComponent::ApplyActiveWeaponStateToCharacter()
 	const FGameplayTag ActiveWeaponTag = GetActiveWeaponItemTag();
 	if (!ActiveWeaponTag.IsValid())
 	{
+		CachedCharacter->SetEquippedWeapon(nullptr);
 		CachedCharacter->SetWeaponState(EBGWeaponPoseType::None, false);
 		return;
 	}
@@ -1403,27 +1451,24 @@ void UBG_EquipmentComponent::ApplyActiveWeaponStateToCharacter()
 		ActiveWeaponTag, TEXT("ApplyActiveWeaponStateToCharacter"));
 	if (!WeaponRow)
 	{
+		CachedCharacter->SetEquippedWeapon(nullptr);
 		CachedCharacter->SetWeaponState(EBGWeaponPoseType::None, false);
 		return;
 	}
 
-	EBGWeaponPoseType WeaponPoseType = EBGWeaponPoseType::None;
-	switch (WeaponRow->WeaponPoseCategory)
+	ABG_EquippedWeaponBase* ActiveWeaponActor = GetActiveEquippedWeaponActor();
+	if (!ActiveWeaponActor)
 	{
-	case EBG_WeaponPoseCategory::Pistol:
-		WeaponPoseType = EBGWeaponPoseType::Pistol;
-		break;
-	case EBG_WeaponPoseCategory::Rifle:
-		WeaponPoseType = EBGWeaponPoseType::Rifle;
-		break;
-	case EBG_WeaponPoseCategory::Shotgun:
-		WeaponPoseType = EBGWeaponPoseType::Shotgun;
-		break;
-	default:
-		WeaponPoseType = EBGWeaponPoseType::None;
-		break;
+		LOGE(TEXT("%s: ApplyActiveWeaponStateToCharacter failed because ActiveWeaponActor was null for tag %s."),
+			*GetNameSafe(this),
+			*ActiveWeaponTag.ToString());
+		CachedCharacter->SetEquippedWeapon(nullptr);
+		CachedCharacter->SetWeaponState(EBGWeaponPoseType::None, false);
+		return;
 	}
 
+	const EBGWeaponPoseType WeaponPoseType = ResolveCharacterWeaponPoseType(*WeaponRow);
+	CachedCharacter->SetEquippedWeapon(ActiveWeaponActor);
 	CachedCharacter->SetWeaponState(WeaponPoseType, WeaponPoseType != EBGWeaponPoseType::None);
 }
 

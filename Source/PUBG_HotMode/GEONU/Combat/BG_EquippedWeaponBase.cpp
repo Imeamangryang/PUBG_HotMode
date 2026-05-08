@@ -4,6 +4,7 @@
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Net/UnrealNetwork.h"
 #include "Player/BG_Character.h"
 #include "PUBG_HotMode/PUBG_HotMode.h"
 
@@ -20,6 +21,11 @@ ABG_EquippedWeaponBase::ABG_EquippedWeaponBase()
 	EquippedMeshComponent->SetupAttachment(WeaponRootComponent);
 	EquippedMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	EquippedMeshComponent->SetGenerateOverlapEvents(false);
+
+	WeaponPoseType = DefaultWeaponPoseType;
+	AmmoItemTag = DefaultAmmoItemTag;
+	MagazineCapacity = FMath::Max(0, DefaultMagazineCapacity);
+	LoadedAmmo = MagazineCapacity;
 }
 
 namespace
@@ -176,6 +182,108 @@ void ABG_EquippedWeaponBase::NotifyReloadFinished(bool bReloadSucceeded)
 	OnReloadFinished(bReloadSucceeded);
 }
 
+void ABG_EquippedWeaponBase::ApplyWeaponRuntimeDefinition(
+	EBGWeaponPoseType NewWeaponPoseType,
+	const FGameplayTag& NewAmmoItemTag,
+	int32 NewMagazineCapacity,
+	int32 NewLoadedAmmo)
+{
+	WeaponPoseType = NewWeaponPoseType;
+	AmmoItemTag = NewAmmoItemTag;
+	MagazineCapacity = FMath::Max(0, NewMagazineCapacity);
+	LoadedAmmo = FMath::Clamp(NewLoadedAmmo, 0, MagazineCapacity);
+	bIsReloadingWeapon = false;
+}
+
+bool ABG_EquippedWeaponBase::CanFire(int32 AmmoCost) const
+{
+	return AmmoCost > 0
+		&& !bIsReloadingWeapon
+		&& LoadedAmmo >= AmmoCost;
+}
+
+bool ABG_EquippedWeaponBase::ConsumeLoadedAmmo(int32 AmmoCost)
+{
+	if (!CanFire(AmmoCost))
+	{
+		LOGE(TEXT("%s: ConsumeLoadedAmmo failed because AmmoCost=%d, LoadedAmmo=%d, bIsReloadingWeapon=%d."),
+			*GetNameSafe(this),
+			AmmoCost,
+			LoadedAmmo,
+			bIsReloadingWeapon ? 1 : 0);
+		return false;
+	}
+
+	LoadedAmmo = FMath::Max(0, LoadedAmmo - AmmoCost);
+	return true;
+}
+
+int32 ABG_EquippedWeaponBase::GetMissingAmmoCount() const
+{
+	return FMath::Max(0, MagazineCapacity - LoadedAmmo);
+}
+
+bool ABG_EquippedWeaponBase::CanReloadWithInventoryAmmo(int32 InventoryAmmoCount) const
+{
+	if (bIsReloadingWeapon || MagazineCapacity <= 0 || LoadedAmmo >= MagazineCapacity)
+	{
+		return false;
+	}
+
+	return bUseInfiniteDebugAmmo || InventoryAmmoCount > 0;
+}
+
+bool ABG_EquippedWeaponBase::BeginWeaponReload()
+{
+	if (bIsReloadingWeapon)
+	{
+		LOGE(TEXT("%s: BeginWeaponReload failed because a reload was already in progress."), *GetNameSafe(this));
+		return false;
+	}
+
+	if (MagazineCapacity <= 0)
+	{
+		LOGE(TEXT("%s: BeginWeaponReload failed because MagazineCapacity was %d."), *GetNameSafe(this), MagazineCapacity);
+		return false;
+	}
+
+	bIsReloadingWeapon = true;
+	return true;
+}
+
+int32 ABG_EquippedWeaponBase::ResolveReloadAmount(int32 InventoryAmmoCount) const
+{
+	const int32 MissingAmmo = GetMissingAmmoCount();
+	if (MissingAmmo <= 0)
+	{
+		return 0;
+	}
+
+	if (bUseInfiniteDebugAmmo)
+	{
+		return MissingAmmo;
+	}
+
+	return FMath::Clamp(InventoryAmmoCount, 0, MissingAmmo);
+}
+
+void ABG_EquippedWeaponBase::FinishWeaponReload(int32 ReloadedAmmo)
+{
+	if (!bIsReloadingWeapon)
+	{
+		LOGE(TEXT("%s: FinishWeaponReload failed because no reload was active."), *GetNameSafe(this));
+		return;
+	}
+
+	LoadedAmmo = FMath::Clamp(LoadedAmmo + FMath::Max(0, ReloadedAmmo), 0, MagazineCapacity);
+	bIsReloadingWeapon = false;
+}
+
+void ABG_EquippedWeaponBase::CancelWeaponReload()
+{
+	bIsReloadingWeapon = false;
+}
+
 void ABG_EquippedWeaponBase::OnOwningCharacterChanged_Implementation(ABG_Character* NewOwningCharacter)
 {
 }
@@ -198,4 +306,15 @@ void ABG_EquippedWeaponBase::OnReloadStarted_Implementation(float ReloadDuration
 
 void ABG_EquippedWeaponBase::OnReloadFinished_Implementation(bool bReloadSucceeded)
 {
+}
+
+void ABG_EquippedWeaponBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ABG_EquippedWeaponBase, WeaponPoseType);
+	DOREPLIFETIME(ABG_EquippedWeaponBase, AmmoItemTag);
+	DOREPLIFETIME(ABG_EquippedWeaponBase, MagazineCapacity);
+	DOREPLIFETIME(ABG_EquippedWeaponBase, LoadedAmmo);
+	DOREPLIFETIME(ABG_EquippedWeaponBase, bIsReloadingWeapon);
 }

@@ -7,6 +7,7 @@
 #include "BG_WeaponFireComponent.generated.h"
 
 class UAnimMontage;
+class ABG_EquippedWeaponBase;
 class UBG_DamageSystem;
 class UBG_EquipmentComponent;
 class UBG_InventoryComponent;
@@ -170,6 +171,7 @@ private:
 	EBGWeaponFireMode ResolveFireMode(EBGWeaponPoseType WeaponPoseType) const;
 	UBG_EquipmentComponent* GetEquipmentComponent(const TCHAR* OperationName) const;
 	UBG_InventoryComponent* GetInventoryComponent(const TCHAR* OperationName) const;
+	ABG_EquippedWeaponBase* GetActiveEquippedWeapon(const TCHAR* OperationName) const;
 	UBG_ItemDataRegistrySubsystem* GetItemDataRegistrySubsystem(const TCHAR* OperationName) const;
 	const FBG_WeaponFireSpecRow* GetActiveWeaponFireSpecRow(const TCHAR* OperationName) const;
 	const FBG_WeaponItemDataRow* GetActiveWeaponItemRow(const TCHAR* OperationName) const;
@@ -213,6 +215,9 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon", meta = (AllowPrivateAccess = "true"))
 	FBGWeaponFireSettings ShotgunFireSettings;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon", meta = (AllowPrivateAccess = "true"))
+	FBGWeaponFireSettings SniperFireSettings;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon|Ammo", meta = (AllowPrivateAccess = "true"))
 	FBGWeaponAmmoSettings PistolAmmoSettings;
 
@@ -221,6 +226,9 @@ private:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon|Ammo", meta = (AllowPrivateAccess = "true"))
 	FBGWeaponAmmoSettings ShotgunAmmoSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon|Ammo", meta = (AllowPrivateAccess = "true"))
+	FBGWeaponAmmoSettings SniperAmmoSettings;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAnimMontage> PistolFireMontage = nullptr;
@@ -232,6 +240,9 @@ private:
 	TObjectPtr<UAnimMontage> ShotgunFireMontage = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimMontage> SniperFireMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAnimMontage> PistolReloadMontage = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
@@ -239,6 +250,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UAnimMontage> ShotgunReloadMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimMontage> SniperReloadMontage = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
 	FName FireMontageSlotName = TEXT("UpperBody");

@@ -414,6 +414,7 @@ void ABG_PlayerController::BindPawnInput()
 	InputComponent->BindKey(EKeys::Two, IE_Pressed, this, &ABG_PlayerController::OnEquipRifleInputStarted);
 	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &ABG_PlayerController::OnUseBandageInputStarted);
 	InputComponent->BindKey(EKeys::Zero, IE_Pressed, this, &ABG_PlayerController::OnUnequipWeaponInputStarted);
+	InputComponent->BindKey(EKeys::X, IE_Pressed, this, &ABG_PlayerController::OnUnequipWeaponInputStarted);
 
 	LastBoundCharacter = BGCharacter;
 	LastBoundInputComponent = InputComponent;
@@ -512,6 +513,7 @@ void ABG_PlayerController::OnUnequipWeaponInputStarted()
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
 		// 임시 해제 입력이다. 최종 인벤토리 시스템이 오면 장착 상태는 그쪽이 관리한다.
+		BGCharacter->SetEquippedWeapon(nullptr);
 		BGCharacter->SetWeaponState(EBGWeaponPoseType::None, false);
 		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip cleared."), *GetNameSafe(this));
 		return;
@@ -649,12 +651,18 @@ void ABG_PlayerController::OnReloadInputStarted()
 
 void ABG_PlayerController::OnInteractInputStarted()
 {
+	if (IsInAirplaneView())
+	{
+		TryExitAirplane();
+		return;
+	}
+	
 	if (ABG_Character* BGChar = GetBGCharacter())
 	{
 		BGChar->InteractFromInput();
 		return;
 	}
-
+	
 	UE_LOG(LogTemp, Error, TEXT("%s: OnInteractInputStarted failed because controlled character was null."), *GetNameSafe(this));
 }
 
@@ -880,4 +888,26 @@ void ABG_PlayerController::EndAirplaneView()
 	}
 
 	BG_SHIN_LOG_INFO(TEXT("EndAirplaneView completed"));
+}
+
+void ABG_PlayerController::TryExitAirplane()
+{
+	if (!AirplaneCameraRig)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: TryExitAirplane failed because AirplaneCameraRig was null."), *GetNameSafe(this));
+		return;
+	}
+
+	ABG_Character* BGCharacter = GetBGCharacter();
+	if (!BGCharacter)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: TryExitAirplane failed because controlled character was null."), *GetNameSafe(this));
+		return;
+	}
+
+	const FVector DropLocation = AirplaneCameraRig->GetActorLocation() + FVector(0.0f, 0.0f, -150.0f);
+	const FVector DropForwardVector = AirplaneCameraRig->GetActorForwardVector();
+
+	BGCharacter->Server_BeginAirplaneDrop(DropLocation, DropForwardVector);
+	EndAirplaneView();
 }

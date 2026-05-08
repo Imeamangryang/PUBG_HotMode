@@ -1,4 +1,5 @@
-#include "Player/BG_Character.h"
+﻿#include "Player/BG_Character.h"
+#include "Combat/BG_EquippedWeaponBase.h"
 #include "Combat/BG_DamageSystem.h"
 #include "Combat/BG_HealthComponent.h"
 #include "Combat/BG_WeaponFireComponent.h"
@@ -77,6 +78,15 @@ ABG_Character::ABG_Character()
 	
 	// 파쿠르 컴포넌트
 	ParkourComponent = CreateDefaultSubobject<UParkourComponent>(TEXT("ParkourComponent"));
+	
+	ParachuteMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ParachuteMesh"));
+	ParachuteMeshComponent->SetupAttachment(GetMesh());
+	ParachuteMeshComponent->SetRelativeLocation(ParachuteRelativeLocation);
+	ParachuteMeshComponent->SetRelativeRotation(ParachuteRelativeRotation);
+	ParachuteMeshComponent->SetRelativeScale3D(ParachuteRelativeScale);
+	ParachuteMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ParachuteMeshComponent->SetGenerateOverlapEvents(false);
+	ParachuteMeshComponent->SetHiddenInGame(true);
 
 	bIsWeaponEquipped = false;
 	EquippedWeaponPoseType = EBGWeaponPoseType::None;
@@ -139,10 +149,35 @@ void ABG_Character::BeginPlay()
 		{
 			if (USkeletalMeshComponent* SkeletalChild = Cast<USkeletalMeshComponent>(Child))
 			{
-				// 대장(Body)의 애니메이션을 따라하게 함
+				// Body 애니메이션을 따라가게 함
 				SkeletalChild->SetLeaderPoseComponent(Body);
 			}
 		}
+	}
+}
+
+void ABG_Character::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
+{
+	Super::OnMovementModeChanged(PrevMovementMode, PreviousCustomMode);
+
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: OnMovementModeChanged failed because CharacterMovement was null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (MovementComponent->IsFalling())
+	{
+		FallingStartZ = GetActorLocation().Z;
+		bIsJumpFalling = true;
+		bIsParachuteFalling = false;
+		return;
+	}
+
+	if (PrevMovementMode == MOVE_Falling)
+	{
+		HandleLandingFromAir();
 	}
 }
 
@@ -154,6 +189,25 @@ void ABG_Character::Tick(float DeltaSeconds)
 	{
 		bIsFalling = MovementComponent->IsFalling();
 		bIsAcceleration = MovementComponent->GetCurrentAcceleration().Size() > 0.f;
+
+		if (bIsFalling)
+		{
+			const float FallingDistance = FallingStartZ - GetActorLocation().Z;
+			const bool bReachedParachuteThreshold = FallingDistance >= ParachuteFallThreshold;
+			if (bReachedParachuteThreshold && !bIsParachuteFalling && ParachuteFallMontage)
+			{
+				if (USkeletalMeshComponent* BodyMesh = GetBodyAnimationMesh())
+				{
+					if (UAnimInstance* AnimInstance = BodyMesh->GetAnimInstance())
+					{
+						AnimInstance->Montage_Play(ParachuteFallMontage);
+					}
+				}
+			}
+
+			bIsParachuteFalling = bReachedParachuteThreshold;
+			bIsJumpFalling = !bReachedParachuteThreshold;
+		}
 	}
 	else
 	{
@@ -164,11 +218,33 @@ void ABG_Character::Tick(float DeltaSeconds)
 
 	UpdateDerivedState();
 }
+// 스탠딩/크라우치/엎드리기 상태 변경 OnRep
+void ABG_Character::OnRep_CharacterStance()
+{
+	UpdateDerivedState();
+}
+
+void ABG_Character::OnRep_IsProne()
+{
+	UpdateDerivedState();
+}
 
 void ABG_Character::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 	// 바인딩은 BG_PlayerController에서 수행하므로 비워둠
+}
+
+void ABG_Character::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+	
+	if (!bIsSkyDiving)
+	{
+		return;
+	}
+
+	ResetAfterSkyDiveLanding();
 }
 
 void ABG_Character::MoveFromInput(const FInputActionValue& Value)
@@ -342,22 +418,23 @@ void ABG_Character::ToggleCrouchFromInput()
 {
 	if (bIsDead || !bCanEnterCrouch) return;
 
-	// 1. 만약 엎드려 있었다면 엎드리기 해제 (즉시)
+	// 1. 엎드려 있었다면 엎드리기 해제
 	if (bIsProne) 
 	{
 		bIsProne = false;
-		// 엎드려 있다가 Crouch 키를 누르면 바로 앉은 상태로 가게 하거나, 
-		// 혹은 서게 한 뒤 Crouch를 수행하게 할 수 있습니다.
+		// 엎드린 상태에서 Crouch 입력 시 바로 앉은 상태로 전환
 	}
 
 	// 2. 언리얼 기본 Crouch 상태 토글
 	if (bIsCrouched)
 	{
 		UnCrouch();
+		CharacterStance = EBGCharacterStance::Standing;
 	}
 	else
 	{
 		Crouch();
+		CharacterStance = EBGCharacterStance::Crouching;
 	}
 
 	UpdateDerivedState();
@@ -367,7 +444,7 @@ void ABG_Character::ToggleProneFromInput()
 {
 	if (bIsDead || !bCanEnterProne) return;
 
-	// 클라이언트에서만 호출되면 서버가 상태를 가지지 못하기 때문에 서버로 전달
+	// 클라이언트에서만 호출되면 서버가 상태를 가지지 못하므로 서버로 전달
 	const bool bNewIsProne = !bIsProne;
 	if (!HasAuthority())
 	{
@@ -381,6 +458,14 @@ void ABG_Character::ToggleProneFromInput()
 	}
 
 	bIsProne = bNewIsProne;
+
+	// 엎드리기 상태에 따라 스탠스 갱신
+	if (bIsProne) {
+		CharacterStance = EBGCharacterStance::Prone;
+	} else {
+		CharacterStance = EBGCharacterStance::Standing;
+	}
+
 	UpdateDerivedState();
 }
 
@@ -628,17 +713,120 @@ void ABG_Character::OnParachuteAction_Implementation()
 	if (bIsFalling && bHasParachute && !bIsParachuteOpen)
 	{
 		bIsParachuteOpen = true;
+		bIsParachuteFalling = true;
+		bIsJumpFalling = false;
 		bHasParachute = false; // 한 번 펴면 소모됨
-        
-		// 낙하산이 펴지면 하강 속도를 물리적으로 제한
-		GetCharacterMovement()->AirControl = 1.0f; // 공중 제어력 증가
-		GetCharacterMovement()->GravityScale = 0.1f; // 천천히 떨어짐
+		// 수직 속도 제한
+		// 수평 속도도 줄임
+		// 공중 제어력 증가
+		// falling 마찰/감속 증가
+		// 카메라 약간 더 안정적인 거리로 변경
+		if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+		{
+			MovementComponent->AirControl = 0.8f;
+			MovementComponent->GravityScale = 0.2f;
+			MovementComponent->BrakingDecelerationFalling = 2048.0f;
+			MovementComponent->FallingLateralFriction = 1.5f;
+
+			FVector Velocity = MovementComponent->Velocity;
+
+			// 낙하산 전개 순간 즉시 감속
+			Velocity.X *= 0.25f;
+			Velocity.Y *= 0.25f;
+			Velocity.Z = -150.0f;
+
+			MovementComponent->Velocity = Velocity;
+		}
+		
+		OnRep_IsParachuteOpen();
 	}
+}
+
+void ABG_Character::BeginAirplaneDrop(const FVector& DropLocation, const FVector& DropForwardVector)
+{
+	bIsSkyDiving = true;
+	bIsParachuteOpen = false;
+	bHasParachute = true;
+
+	SetActorLocation(DropLocation);
+	SetActorRotation(DropForwardVector.Rotation());
+
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->SetMovementMode(MOVE_Falling);
+		MovementComponent->Velocity = FVector::ZeroVector;
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: BeginAirplaneDrop failed because CharacterMovement was null."), *GetNameSafe(this));
+		return;
+	}
+
+	LaunchCharacter(DropForwardVector.GetSafeNormal() * 600.0f + FVector(0.0f, 0.0f, -200.0f), true, true);
+	ApplySkyDiveCamera();
+	UpdateDerivedState();
+	
+	if (HasAuthority() && GetWorld())
+	{
+		FTimerHandle AutoParachuteTimerHandle;
+		GetWorld()->GetTimerManager().SetTimer(
+			AutoParachuteTimerHandle,
+			FTimerDelegate::CreateWeakLambda(this, [this]()
+			{
+				if (!IsValid(this))
+				{
+					return;
+				}
+
+				if (!bIsSkyDiving)
+				{
+					return;
+				}
+
+				if (bIsParachuteOpen)
+				{
+					return;
+				}
+
+				if (!bIsFalling)
+				{
+					return;
+				}
+
+				OnParachuteAction();
+				Client_ApplyParachuteCamera();
+			}),
+			5.0f,
+			false
+		);
+	}
+}
+
+void ABG_Character::OnRep_IsParachuteOpen()
+{
+	if (!ParachuteMeshComponent)
+	{
+		return;
+	}
+	
+	ParachuteMeshComponent->SetHiddenInGame(!bIsParachuteOpen);
+}
+
+void ABG_Character::Server_BeginAirplaneDrop_Implementation(const FVector& DropLocation, const FVector& DropForwardVector)
+{
+	BeginAirplaneDrop(DropLocation, DropForwardVector);
+}
+
+void ABG_Character::Server_OpenParachute_Implementation()
+{
+	OnParachuteAction();
 }
 
 void ABG_Character::SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped)
 {
-	const bool bNewEffectiveWeaponEquipped = bNewWeaponEquipped && NewWeaponPoseType != EBGWeaponPoseType::None;
+	const bool bNewEffectiveWeaponEquipped = bNewWeaponEquipped
+		&& NewWeaponPoseType != EBGWeaponPoseType::None
+		&& EquippedWeapon != nullptr;
 	const bool bWeaponStateChanging = EquippedWeaponPoseType != NewWeaponPoseType
 		|| bIsWeaponEquipped != bNewEffectiveWeaponEquipped;
 
@@ -660,7 +848,7 @@ void ABG_Character::SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNe
 	}
 
 	EquippedWeaponPoseType = NewWeaponPoseType;
-	bIsWeaponEquipped = bNewWeaponEquipped && NewWeaponPoseType != EBGWeaponPoseType::None;
+	bIsWeaponEquipped = bNewEffectiveWeaponEquipped;
 
 	if (!bIsWeaponEquipped)
 	{
@@ -760,6 +948,13 @@ void ABG_Character::StartTimedCharacterState(EBGCharacterState NewCharacterState
 			Duration,
 			false);
 	}
+}
+
+void ABG_Character::SetEquippedWeapon(ABG_EquippedWeaponBase* NewEquippedWeapon)
+{
+	EquippedWeapon = NewEquippedWeapon;
+	bIsWeaponEquipped = EquippedWeapon != nullptr && EquippedWeaponPoseType != EBGWeaponPoseType::None;
+	UpdateDerivedState();
 }
 
 void ABG_Character::FinishTimedCharacterState(EBGCharacterState ExpectedCharacterState)
@@ -1003,11 +1198,81 @@ void ABG_Character::TryInteractWithCurrentTarget()
 
 	if (bIsFalling && bHasParachute && !bIsParachuteOpen)
 	{
-		OnParachuteAction();
+		if (!HasAuthority())
+		{
+			ApplyParachuteCamera();
+			Server_OpenParachute();
+		}
+		else
+		{
+			OnParachuteAction();
+		}
 		return;
 	}
 
 	UE_LOG(LogBGCharacter, Error, TEXT("%s: TryInteractWithCurrentTarget failed because there was no interactable target in range."), *GetNameSafe(this));
+}
+
+void ABG_Character::ApplySkyDiveCamera()
+{
+	if (!CameraBoom)
+	{
+		return;
+	}
+
+	CameraBoom->TargetArmLength = 900.0f;
+	CameraBoom->SocketOffset = FVector(0.0f, 0.0f, 250.0f);
+}
+
+void ABG_Character::ApplyParachuteCamera()
+{
+	if (!CameraBoom)
+	{
+		return;
+	}
+
+	CameraBoom->TargetArmLength = 1800.0f;
+	CameraBoom->SocketOffset = FVector(0.0f, 0.0f, 180.0f);
+}
+
+void ABG_Character::Client_RestoreDefaultCamera_Implementation()
+{
+	RestoreDefaultCamera();
+}
+
+void ABG_Character::Client_ApplyParachuteCamera_Implementation()
+{
+	ApplyParachuteCamera();
+}
+
+void ABG_Character::RestoreDefaultCamera()
+{
+	if (!CameraBoom)
+	{
+		return;
+	}
+	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Blue, FString::Printf(TEXT("%s: Restoring default camera."), *GetNameSafe(this)));
+
+	CameraBoom->TargetArmLength = DefaultCameraBoomLength;
+	CameraBoom->SocketOffset = DefaultCameraBoomSocketOffset;
+}
+
+void ABG_Character::ResetAfterSkyDiveLanding()
+{
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->GravityScale = 1.0f;
+		MovementComponent->AirControl = 0.05f;
+		MovementComponent->BrakingDecelerationFalling = 0.0f;
+		MovementComponent->FallingLateralFriction = 0.0f;
+	}
+
+	if (HasAuthority())
+	{
+		bIsParachuteOpen = false;
+		OnRep_IsParachuteOpen();
+		Client_RestoreDefaultCamera();
+	}
 }
 
 
@@ -1161,7 +1426,14 @@ void ABG_Character::ApplyWeaponMovementState()
 
 void ABG_Character::UpdateDerivedState()
 {
-	bHasWeapon = bIsWeaponEquipped && EquippedWeaponPoseType != EBGWeaponPoseType::None;
+	// Character animation state always follows the replicated active weapon actor so temporary attachment mismatches do not break ABP.
+	if (EquipmentComponent)
+	{
+		EquippedWeapon = EquipmentComponent->GetActiveEquippedWeaponActor();
+	}
+
+	bHasWeapon = EquippedWeapon != nullptr && EquippedWeaponPoseType != EBGWeaponPoseType::None;
+	bIsWeaponEquipped = bHasWeapon;
 	bIsCrouchingState = bIsCrouched;
 
 	UpdateCharacterStance();
@@ -1222,7 +1494,7 @@ void ABG_Character::ApplyMovementSpeedForStance()
 		UE_LOG(LogBGCharacter, Error, TEXT("%s: ApplyMovementSpeedForStance failed because CharacterMovement was null."), *GetNameSafe(this));
 		return;
 	}
-
+	
 	MovementComponent->MaxWalkSpeedCrouched = CrouchWalkSpeed;
 	MovementComponent->MaxWalkSpeed = bIsProne ? ProneWalkSpeed : StandingWalkSpeed;
 }
@@ -1280,6 +1552,40 @@ bool ABG_Character::CanStartAim() const
 	return bCanAim;
 }
 
+void ABG_Character::ResetAirStateTracking()
+{
+	bIsParachuteFalling = false;
+	bIsJumpFalling = false;
+	bIsParachuteOpen = false;
+	FallingStartZ = 0.f;
+
+	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
+	{
+		MovementComponent->AirControl = 0.05f;
+		MovementComponent->GravityScale = 1.0f;
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: ResetAirStateTracking failed because CharacterMovement was null."), *GetNameSafe(this));
+	}
+}
+
+void ABG_Character::HandleLandingFromAir()
+{
+	if (bIsParachuteFalling && ParachuteLandingMontage)
+	{
+		if (USkeletalMeshComponent* BodyMesh = GetBodyAnimationMesh())
+		{
+			if (UAnimInstance* AnimInstance = BodyMesh->GetAnimInstance())
+			{
+				AnimInstance->Montage_Play(ParachuteLandingMontage);
+			}
+		}
+	}
+
+	ResetAirStateTracking();
+}
+
 void ABG_Character::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -1301,4 +1607,5 @@ void ABG_Character::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(ABG_Character, bCanFire);
 	DOREPLIFETIME(ABG_Character, bCanUseMeleeAttack);
 	DOREPLIFETIME(ABG_Character, bIsDead);
+	DOREPLIFETIME(ABG_Character, bIsParachuteOpen);
 }

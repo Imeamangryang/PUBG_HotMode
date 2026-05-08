@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
@@ -10,6 +10,7 @@
 #include "BG_Character.generated.h"
 
 class ABG_WorldItemBase;
+class ABG_EquippedWeaponBase;
 class USpringArmComponent;
 class UCameraComponent;
 class USkeletalMeshComponent;
@@ -38,7 +39,8 @@ enum class EBGWeaponPoseType : uint8
 	None UMETA(DisplayName = "None"),
 	Pistol UMETA(DisplayName = "Pistol"),
 	Rifle UMETA(DisplayName = "Rifle"),
-	Shotgun UMETA(DisplayName = "Shotgun")
+	Shotgun UMETA(DisplayName = "Shotgun"),
+	Sniper UMETA(DisplayName = "Sniper")
 };
 
 UENUM(BlueprintType)
@@ -46,7 +48,7 @@ enum class EBGCharacterState : uint8
 {
 	Idle        UMETA(DisplayName = "Idle"),
 	Reloading   UMETA(DisplayName = "Reloading"), // 장전 중
- 	Equipping   UMETA(DisplayName = "Equipping"), // 총 꺼내는 중
+	Equipping   UMETA(DisplayName = "Equipping"), // 총 꺼내는 중
 	MeleeAttacking UMETA(DisplayName = "MeleeAttacking"), // 근접 공격 중
 	Dead        UMETA(DisplayName = "Dead")       // 사망
 };
@@ -78,6 +80,8 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode) override;
+	virtual void Landed(const FHitResult& Hit) override;
 
 	// 공격 네트워크 로직
 	UFUNCTION(Server, Reliable, WithValidation)
@@ -143,8 +147,8 @@ public:
 	/** 현재 캐릭터의 행위 상태 (장전, 사망 등) */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "State")
 	EBGCharacterState CharacterState = EBGCharacterState::Idle;
-
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "State")
+	
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_CharacterStance, Category = "State", meta = (AllowPrivateAccess = "true"))
 	EBGCharacterStance CharacterStance = EBGCharacterStance::Standing;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "State")
@@ -162,7 +166,7 @@ public:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "State")
 	bool bCanEnterProne = true;
 
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "State")
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_IsProne, Category = "State", meta = (AllowPrivateAccess = "true"))
 	bool bIsProne = false;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category = "State")
@@ -192,6 +196,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	EBGWeaponPoseType GetEquippedWeaponPoseType() const { return EquippedWeaponPoseType; }
+
+	UFUNCTION(BlueprintPure, Category = "Weapon")
+	ABG_EquippedWeaponBase* GetEquippedWeapon() const { return EquippedWeapon; }
 
 	UFUNCTION(BlueprintPure, Category = "Weapon")
 	AActor* GetCurrentInteractableWeapon() const { return CurrentInteractableWeapon; }
@@ -234,9 +241,30 @@ public:
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State|Parachute")
 	bool bHasParachute = true; // 시작할 때 가지고 있다고 가정
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_IsParachuteOpen, Category = "State|Parachute")
+	bool bIsParachuteOpen = false;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "State|Parachute")
-	bool bIsParachuteOpen = false;
+	bool bIsParachuteFalling = false;
+
+	bool bIsJumpFalling = false;
+	
+	UFUNCTION(Server, Reliable)
+	void Server_BeginAirplaneDrop(const FVector& DropLocation, const FVector& DropForwardVector);
+
+	void BeginAirplaneDrop(const FVector& DropLocation, const FVector& DropForwardVector);
+	
+	UFUNCTION(Server, Reliable)
+	void Server_OpenParachute();
+	
+	UFUNCTION(Client, Reliable)
+	void Client_RestoreDefaultCamera();
+	
+	UFUNCTION(Client, Reliable)
+	void Client_ApplyParachuteCamera();
+	
+	UFUNCTION()
+	void OnRep_IsParachuteOpen();
 
 	// 상호작용으로 호출될 함수
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "State|Parachute")
@@ -253,6 +281,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Weapon")
 	void SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped);
+
+	UFUNCTION(BlueprintCallable, Category = "Weapon")
+	void SetEquippedWeapon(ABG_EquippedWeaponBase* NewEquippedWeapon);
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped);
@@ -313,6 +344,7 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Inventory")
 	FOnBGNearbyWorldItemsChanged OnNearbyWorldItemsChanged;
+	
 
 private:
 	UFUNCTION()
@@ -330,6 +362,12 @@ private:
 	void RefreshCurrentInteractableWeapon();
 	bool IsWeaponInteractableActor(const AActor* CandidateActor) const;
 	void TryInteractWithCurrentTarget();
+	void ApplySkyDiveCamera();
+	void ApplyParachuteCamera();
+	void RestoreDefaultCamera();
+	void ResetAfterSkyDiveLanding();	
+	void ResetAirStateTracking();
+	void HandleLandingFromAir();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -373,9 +411,25 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USphereComponent> InteractionRangeSphere;
 	
-	//파쿠르 시스템
+	// 파쿠르 시스템
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Parkour", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UParkourComponent> ParkourComponent;
+	
+	// 낙하산 관련
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Parachute", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UStaticMeshComponent> ParachuteMeshComponent;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parachute", meta = (AllowPrivateAccess = "true"))
+	FVector ParachuteRelativeLocation = FVector(0.0f, 0.0f, 680.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parachute", meta = (AllowPrivateAccess = "true"))
+	FRotator ParachuteRelativeRotation = FRotator(0.0f, 0.0f, 0.0f);
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Parachute", meta = (AllowPrivateAccess = "true"))
+	FVector ParachuteRelativeScale = FVector(0.5);
+	
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "State|SkyDive", meta = (AllowPrivateAccess = "true"))
+	bool bIsSkyDiving = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
 	float InteractionRangeRadius = 180.f;
@@ -427,13 +481,36 @@ public:
 	bool bIsAiming = false;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<ABG_EquippedWeaponBase> EquippedWeapon = nullptr;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Weapon")
 	TObjectPtr<AActor> CurrentInteractableWeapon = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "State|Parachute", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
+	float ParachuteFallThreshold = 300.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "State|Parachute", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimMontage> ParachuteFallMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "State|Parachute", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimMontage> ParachuteDeployMontage = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "State|Parachute", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UAnimMontage> ParachuteLandingMontage = nullptr;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "State|Parachute", meta = (AllowPrivateAccess = "true"))
+	float FallingStartZ = 0.f;
 
 	FTimerHandle CharacterStateTimerHandle;
 
 	//UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Weapon")
 	//TArray<TObjectPtr<AActor>> NearbyWeapons;
 	
+	UPROPERTY(Transient)
+	float DefaultCameraBoomLength = 150.0f;
+
+	UPROPERTY(Transient)
+	FVector DefaultCameraBoomSocketOffset = FVector(0.0f, 40.0f, 60.0f);
 	
 	
 	virtual void Tick(float DeltaSeconds) override;
@@ -443,4 +520,12 @@ public:
 
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayHitReactMontage();
+	
+	// 스탠딩/크라우치/엎드리기 상태 변경 OnRep
+	UFUNCTION()
+	void OnRep_CharacterStance();
+	
+	UFUNCTION()
+	void OnRep_IsProne();
+	
 };

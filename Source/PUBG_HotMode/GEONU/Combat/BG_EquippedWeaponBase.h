@@ -4,6 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "GameplayTagContainer.h"
+#include "Net/UnrealNetwork.h"
+#include "Player/BG_Character.h"
 #include "BG_EquippedWeaponBase.generated.h"
 
 class ABG_Character;
@@ -17,6 +20,7 @@ class PUBG_HOTMODE_API ABG_EquippedWeaponBase : public AActor
 
 public: // --- Lifecycle ---
 	ABG_EquippedWeaponBase();
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 public: // --- Owner Contract ---
 	UFUNCTION(BlueprintCallable, Category="Equipped Weapon")
@@ -90,6 +94,57 @@ public: // --- Gameplay Hooks ---
 	UFUNCTION(BlueprintCallable, Category="Equipped Weapon")
 	void NotifyReloadFinished(bool bReloadSucceeded);
 
+public: // --- Weapon Runtime State ---
+	// This block owns the runtime magazine state that must survive weapon swaps and server replication.
+	UFUNCTION(BlueprintCallable, Category="Equipped Weapon|Runtime")
+	void ApplyWeaponRuntimeDefinition(
+		EBGWeaponPoseType NewWeaponPoseType,
+		const FGameplayTag& NewAmmoItemTag,
+		int32 NewMagazineCapacity,
+		int32 NewLoadedAmmo);
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	EBGWeaponPoseType GetWeaponPoseType() const { return WeaponPoseType; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	FGameplayTag GetAmmoItemTag() const { return AmmoItemTag; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	int32 GetMagazineCapacity() const { return MagazineCapacity; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	int32 GetLoadedAmmo() const { return LoadedAmmo; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	bool IsReloadingWeapon() const { return bIsReloadingWeapon; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	bool UsesInfiniteDebugAmmo() const { return bUseInfiniteDebugAmmo; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	bool CanFire(int32 AmmoCost = 1) const;
+
+	UFUNCTION(BlueprintCallable, Category="Equipped Weapon|Runtime")
+	bool ConsumeLoadedAmmo(int32 AmmoCost);
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	int32 GetMissingAmmoCount() const;
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	bool CanReloadWithInventoryAmmo(int32 InventoryAmmoCount) const;
+
+	UFUNCTION(BlueprintCallable, Category="Equipped Weapon|Runtime")
+	bool BeginWeaponReload();
+
+	UFUNCTION(BlueprintCallable, Category="Equipped Weapon|Runtime")
+	int32 ResolveReloadAmount(int32 InventoryAmmoCount) const;
+
+	UFUNCTION(BlueprintCallable, Category="Equipped Weapon|Runtime")
+	void FinishWeaponReload(int32 ReloadedAmmo);
+
+	UFUNCTION(BlueprintCallable, Category="Equipped Weapon|Runtime")
+	void CancelWeaponReload();
+
 protected: // --- Extension Hooks ---
 	UFUNCTION(BlueprintNativeEvent, Category="Equipped Weapon")
 	void OnOwningCharacterChanged(ABG_Character* NewOwningCharacter);
@@ -138,7 +193,43 @@ private: // --- Authoring Data ---
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Attach", meta=(AllowPrivateAccess="true"))
 	FTransform BackAttachTransform = FTransform::Identity;
 
+	// These authoring values let BP child weapon actors drive pose/ammo defaults before table data is wired in.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime", meta=(AllowPrivateAccess="true"))
+	EBGWeaponPoseType DefaultWeaponPoseType = EBGWeaponPoseType::None;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime",
+		meta=(AllowPrivateAccess="true", Categories="Item.Ammo"))
+	FGameplayTag DefaultAmmoItemTag;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime",
+		meta=(AllowPrivateAccess="true", ClampMin="0"))
+	int32 DefaultMagazineCapacity = 0;
+
+	// Comment out this flag later when reload should strictly consume inventory ammo.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Debug", meta=(AllowPrivateAccess="true"))
+	bool bUseInfiniteDebugAmmo = true;
+
 private: // --- Runtime Data ---
 	UPROPERTY(Transient, BlueprintReadOnly, Category="Equipped Weapon", meta=(AllowPrivateAccess="true"))
 	TObjectPtr<ABG_Character> OwningCharacter = nullptr;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime",
+		meta=(AllowPrivateAccess="true"))
+	EBGWeaponPoseType WeaponPoseType = EBGWeaponPoseType::None;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime",
+		meta=(AllowPrivateAccess="true", Categories="Item.Ammo"))
+	FGameplayTag AmmoItemTag;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime",
+		meta=(AllowPrivateAccess="true", ClampMin="0"))
+	int32 MagazineCapacity = 0;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime",
+		meta=(AllowPrivateAccess="true", ClampMin="0"))
+	int32 LoadedAmmo = 0;
+
+	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime",
+		meta=(AllowPrivateAccess="true"))
+	bool bIsReloadingWeapon = false;
 };

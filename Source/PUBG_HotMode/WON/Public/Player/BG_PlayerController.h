@@ -115,6 +115,11 @@ public:
 	void BeginAirplaneView(ABG_Airplane* InAirplane);
 	void EndAirplaneView();
 
+	UFUNCTION(BlueprintPure, Category = "Airplane Camera")
+	bool IsInAirplaneView() const { return AirplaneCameraRig != nullptr; }
+
+	void TryExitAirplane();
+	
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	FBGPlayerInputConfig InputConfig;
