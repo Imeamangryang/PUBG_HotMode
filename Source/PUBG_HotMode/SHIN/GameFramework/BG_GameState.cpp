@@ -19,7 +19,7 @@ void ABG_GameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 
 void ABG_GameState::SetMatchState(EBG_MatchState NewState)
 {
-	if (!HasAuthority()) // 서버만 State 변경 가능
+	if (!HasAuthority())
 	{
 		return;
 	}
@@ -65,36 +65,42 @@ void ABG_GameState::SetPreparationTimeRemaining(int32 NewTimeRemaining)
 	OnRep_PreparationTimeRemaining();
 }
 
-TArray<APlayerState*> ABG_GameState::GetLobbyPlayerStates() const
-{
-	TArray<APlayerState*> LobbyPlayerStates;
-
-	for (APlayerState* PlayerState : PlayerArray)
-	{
-		if (!PlayerState)
-		{
-			continue;
-		}
-
-		LobbyPlayerStates.Add(PlayerState);
-	}
-
-	return LobbyPlayerStates;
-}
-
 TArray<FString> ABG_GameState::GetLobbyPlayerNames() const
 {
 	TArray<FString> LobbyPlayerNames;
+	TSet<FString> UniqueNames;
+
+	UE_LOG(LogTemp, Warning, TEXT("[BG_GameState] GetLobbyPlayerNames start. PlayerArrayNum=%d"), PlayerArray.Num());
 
 	for (APlayerState* PlayerState : PlayerArray)
 	{
-		if (!PlayerState)
+		if (!IsValid(PlayerState))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[BG_GameState] Skipping invalid PlayerState"));
+			continue;
+		}
+
+		const FString PlayerName = PlayerState->GetPlayerName().TrimStartAndEnd();
+
+		UE_LOG(LogTemp, Warning, TEXT("[BG_GameState] Candidate PlayerState=%s PlayerName=%s"),
+			*GetNameSafe(PlayerState),
+			*PlayerName);
+
+		if (PlayerName.IsEmpty())
 		{
 			continue;
 		}
 
-		LobbyPlayerNames.Add(PlayerState->GetPlayerName());
+		if (UniqueNames.Contains(PlayerName))
+		{
+			continue;
+		}
+
+		UniqueNames.Add(PlayerName);
+		LobbyPlayerNames.Add(PlayerName);
 	}
+
+	UE_LOG(LogTemp, Warning, TEXT("[BG_GameState] GetLobbyPlayerNames result count=%d"), LobbyPlayerNames.Num());
 
 	return LobbyPlayerNames;
 }

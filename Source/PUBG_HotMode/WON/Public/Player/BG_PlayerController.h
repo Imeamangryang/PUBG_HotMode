@@ -7,6 +7,7 @@
 class ABG_Character;
 class UBG_HealthViewModel;
 class UBG_InventoryViewModel;
+class UBG_WeaponIconCaptureComponent;
 class UInputAction;
 class UInputMappingContext;
 class UUserWidget;
@@ -80,6 +81,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Inventory UI")
 	UBG_InventoryViewModel* GetInventoryViewModel() const { return InventoryViewModel; }
 
+	UFUNCTION(BlueprintPure, Category = "Inventory UI|Weapon Preview")
+	UBG_WeaponIconCaptureComponent* GetWeaponIconCaptureComponent() const { return WeaponIconCaptureComponent; }
+
 	UFUNCTION(BlueprintCallable, Category = "Inventory UI")
 	void OpenInventoryUI();
 
@@ -102,6 +106,18 @@ public:
 	
 	UFUNCTION(BlueprintPure, Category = "Battle UI")
 	UUserWidget* GetBattleWaitingTimeWidget() const { return BattleWaitingTimeWidget; }
+	
+	UFUNCTION(BlueprintCallable, Category = "Battle UI")
+	void ShowEndUI();
+
+	UFUNCTION(BlueprintCallable, Category = "Battle UI")
+	void ShowChickenUI();
+	
+	UFUNCTION(Client, Reliable)
+	void Client_ShowChickenUI();
+	
+	UFUNCTION(Client, Reliable)
+	void Client_ShowEndUI();
 	
 	UFUNCTION(Client, Reliable)
 	void Client_HideBattleWaitingTimeUI();
@@ -179,6 +195,9 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBG_InventoryViewModel> InventoryViewModel = nullptr;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Inventory|Weapon Preview", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UBG_WeaponIconCaptureComponent> WeaponIconCaptureComponent = nullptr;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "HUD", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<UUserWidget> GameHUDWidgetClass = nullptr;
 
@@ -196,6 +215,18 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> BattleWaitingTimeWidget = nullptr;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Battle UI", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UUserWidget> EndUIWidgetClass = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> EndUIWidget = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Battle UI", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UUserWidget> ChickenUIWidgetClass = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> ChickenUIWidget = nullptr;
 	
 	UPROPERTY(EditDefaultsOnly, Category = "Airplane Camera")
 	TSubclassOf<ABG_AirplaneCameraRig> AirplaneCameraRigClass;

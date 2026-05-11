@@ -30,6 +30,8 @@ bool FBGEquippedWeaponBaseDefaultComponentsTest::RunTest(const FString& Paramete
 	         DefaultWeapon->GetHandAttachTransform().Equals(FTransform::Identity));
 	TestTrue(TEXT("Default back attach transform starts as identity."),
 	         DefaultWeapon->GetBackAttachTransform().Equals(FTransform::Identity));
+	TestTrue(TEXT("Default inventory preview transform starts as identity."),
+	         DefaultWeapon->GetPreviewTransform().Equals(FTransform::Identity));
 	return true;
 }
 

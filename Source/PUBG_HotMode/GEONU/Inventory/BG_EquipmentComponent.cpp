@@ -210,6 +210,22 @@ void UBG_EquipmentComponent::ActivateWeapon(EBG_EquipmentSlot WeaponSlot)
 	Server_ActivateWeapon(WeaponSlot);
 }
 
+void UBG_EquipmentComponent::SwapWeaponSlots(EBG_EquipmentSlot SourceSlot, EBG_EquipmentSlot TargetSlot)
+{
+	const AActor* Owner = GetOwner();
+	if (Owner && Owner->HasAuthority())
+	{
+		EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
+		if (!Auth_SwapWeaponSlots(SourceSlot, TargetSlot, FailReason))
+		{
+			NotifyEquipmentFailure(FailReason, SourceSlot);
+		}
+		return;
+	}
+
+	Server_SwapWeaponSlots(SourceSlot, TargetSlot);
+}
+
 bool UBG_EquipmentComponent::Auth_ActivateWeapon(EBG_EquipmentSlot WeaponSlot)
 {
 	if (!CanMutateEquipmentState(TEXT("Auth_ActivateWeapon")))
@@ -236,6 +252,73 @@ bool UBG_EquipmentComponent::Auth_ActivateWeapon(EBG_EquipmentSlot WeaponSlot)
 	BroadcastActiveWeaponSlotChanged();
 	BroadcastEquipmentChanged();
 	ForceEquipmentNetUpdate();
+	return true;
+}
+
+bool UBG_EquipmentComponent::Auth_SwapWeaponSlots(
+	EBG_EquipmentSlot SourceSlot,
+	EBG_EquipmentSlot TargetSlot,
+	EBGInventoryFailReason& OutFailReason)
+{
+	OutFailReason = EBGInventoryFailReason::ServerRejected;
+
+	if (!CanMutateEquipmentState(TEXT("Auth_SwapWeaponSlots")))
+		return false;
+
+	if (!IsPrimaryWeaponSlot(SourceSlot) || !IsPrimaryWeaponSlot(TargetSlot) || SourceSlot == TargetSlot)
+	{
+		LOGE(TEXT("%s: Auth_SwapWeaponSlots failed because SourceSlot=%s and TargetSlot=%s are not a valid PrimaryA/B pair."),
+		     *GetNameSafe(this), *GetEquipmentSlotName(SourceSlot), *GetEquipmentSlotName(TargetSlot));
+		OutFailReason = EBGInventoryFailReason::SlotMismatch;
+		return false;
+	}
+
+	if (!HasEquippedItem(SourceSlot) || !HasEquippedItem(TargetSlot))
+	{
+		LOGE(TEXT("%s: Auth_SwapWeaponSlots failed because SourceSlot=%s or TargetSlot=%s was empty."),
+		     *GetNameSafe(this), *GetEquipmentSlotName(SourceSlot), *GetEquipmentSlotName(TargetSlot));
+		OutFailReason = EBGInventoryFailReason::InvalidItem;
+		return false;
+	}
+
+	ABG_EquippedWeaponBase* SourceWeaponActor = GetEquippedWeaponActor(SourceSlot);
+	ABG_EquippedWeaponBase* TargetWeaponActor = GetEquippedWeaponActor(TargetSlot);
+	if (!IsValid(SourceWeaponActor) || !IsValid(TargetWeaponActor))
+	{
+		LOGE(TEXT("%s: Auth_SwapWeaponSlots failed because SourceActor=%s or TargetActor=%s was invalid."),
+		     *GetNameSafe(this), *GetNameSafe(SourceWeaponActor), *GetNameSafe(TargetWeaponActor));
+		OutFailReason = EBGInventoryFailReason::ServerRejected;
+		return false;
+	}
+
+	const FGameplayTag SourceItemTag = GetEquippedItemTag(SourceSlot);
+	const FGameplayTag TargetItemTag = GetEquippedItemTag(TargetSlot);
+	const int32 SourceLoadedAmmo = SourceWeaponActor->GetLoadedAmmo();
+	const int32 TargetLoadedAmmo = TargetWeaponActor->GetLoadedAmmo();
+
+	SetEquippedItemTag(SourceSlot, TargetItemTag);
+	SetEquippedItemTag(TargetSlot, SourceItemTag);
+	SetLoadedAmmo(SourceSlot, TargetLoadedAmmo);
+	SetLoadedAmmo(TargetSlot, SourceLoadedAmmo);
+	SetEquippedWeaponActor(SourceSlot, TargetWeaponActor);
+	SetEquippedWeaponActor(TargetSlot, SourceWeaponActor);
+
+	if (PublicState.ActiveWeaponSlot == SourceSlot)
+	{
+		PublicState.ActiveWeaponSlot = TargetSlot;
+	}
+	else if (PublicState.ActiveWeaponSlot == TargetSlot)
+	{
+		PublicState.ActiveWeaponSlot = SourceSlot;
+	}
+
+	NormalizeActiveWeaponSlot();
+	RefreshEquippedWeaponAttachments();
+	ApplyActiveWeaponStateToCharacter();
+	BroadcastEquipmentChanged();
+	BroadcastActiveWeaponSlotChanged();
+	ForceEquipmentNetUpdate();
+	OutFailReason = EBGInventoryFailReason::None;
 	return true;
 }
 
@@ -851,6 +934,17 @@ void UBG_EquipmentComponent::Server_ActivateWeapon_Implementation(EBG_EquipmentS
 	Auth_ActivateWeapon(WeaponSlot);
 }
 
+void UBG_EquipmentComponent::Server_SwapWeaponSlots_Implementation(
+	EBG_EquipmentSlot SourceSlot,
+	EBG_EquipmentSlot TargetSlot)
+{
+	EBGInventoryFailReason FailReason = EBGInventoryFailReason::None;
+	if (!Auth_SwapWeaponSlots(SourceSlot, TargetSlot, FailReason))
+	{
+		NotifyEquipmentFailure(FailReason, SourceSlot);
+	}
+}
+
 void UBG_EquipmentComponent::Server_SetThrowable_Implementation(FGameplayTag ThrowableItemTag)
 {
 	Auth_SetThrowable(ThrowableItemTag);
@@ -876,6 +970,11 @@ bool UBG_EquipmentComponent::IsWeaponSlot(EBG_EquipmentSlot Slot) const
 		|| Slot == EBG_EquipmentSlot::PrimaryB
 		|| Slot == EBG_EquipmentSlot::Pistol
 		|| Slot == EBG_EquipmentSlot::Melee;
+}
+
+bool UBG_EquipmentComponent::IsPrimaryWeaponSlot(EBG_EquipmentSlot Slot) const
+{
+	return Slot == EBG_EquipmentSlot::PrimaryA || Slot == EBG_EquipmentSlot::PrimaryB;
 }
 
 bool UBG_EquipmentComponent::IsArmorSlot(EBG_EquipmentSlot Slot) const

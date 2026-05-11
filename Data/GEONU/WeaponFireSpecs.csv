@@ -1,0 +1,5 @@
+﻿Name,WeaponItemTag,FireMode,FireImplementation,Damage,Range,FireCooldown,AmmoCost,PelletCount,SpreadAngleDegrees,TraceChannel,ProjectileClass,ProjectileInitialSpeed,ProjectileGravityScale,bCanThrow,ThrowProjectileClass,ThrowMaxDistance,ThrowDamageMax,ThrowDamageMin,ThrowDamageFalloffStartDistance,DebugDrawDuration
+Item.Weapon.AR.M416,Item.Weapon.AR.M416,FullAuto,Projectile,40.0,100000.0,0.086,1,1,0.6,ECC_Visibility,,88000.0,1.0,false,,0.0,0.0,0.0,0.0,0.0
+Item.Weapon.SR.Kar98k,Item.Weapon.SR.Kar98k,BoltAction,Hitscan,79.0,100000.0,1.9,1,1,0.1,ECC_Visibility,,76000.0,1.0,false,,0.0,0.0,0.0,0.0,0.0
+Item.Weapon.Pistol.P92,Item.Weapon.Pistol.P92,SemiAuto,Projectile,34.0,50000.0,0.1,1,1,1.2,ECC_Visibility,,38000.0,1.0,false,,0.0,0.0,0.0,0.0,0.0
+Item.Weapon.Melee.Pan,Item.Weapon.Melee.Pan,Melee,Melee,80.0,200.0,0.75,0,1,0.0,ECC_Visibility,,0.0,1.0,true,,3000.0,90.0,40.0,1500.0,0.0

@@ -363,6 +363,15 @@ void ABG_BattleGameMode::EndBattleMatch(AController* WinnerController)
 		return;
 	}
 
+	if (ABG_PlayerController* WinnerPlayerController = Cast<ABG_PlayerController>(WinnerController))
+	{
+		WinnerPlayerController->Client_ShowChickenUI();
+	}
+	else
+	{
+		BG_SHIN_LOG_WARN(TEXT("EndBattleMatch could not show chicken UI because WinnerController was invalid"));
+	}
+
 	BGGameState->SetMatchState(EBG_MatchState::Result);
 
 	BG_SHIN_LOG_INFO(TEXT("Battle match ended. WinnerController=%s"),

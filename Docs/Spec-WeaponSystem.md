@@ -1,4 +1,4 @@
-# 무기 시스템 명세
+﻿# 무기 시스템 명세
 
 ## 목표
 
@@ -14,7 +14,7 @@ Dedicated Server 멀티플레이 환경에서 PUBG 스타일 무기, 탄약, 근
 - 바닥 pickup/drop mesh와 display transform은 각 World Item Blueprint에서 authoring
 - 원본 PUBG 구성에 맞춘 초기 대표 무기만 구현: AR 1개, SR 1개, Pistol 1개, Melee 1개, 대응 탄약
 - 기존 `UBG_InventoryComponent`, `UBG_EquipmentComponent`, `ABG_WorldItemBase` 구조를 가능한 한 유지
-- 기존 WON `UBG_WeaponFireComponent`는 임시 구현으로 참고만 하고, 최종 무기 전투는 GEONU 신규 컴포넌트로 작성
+- 기존 WON `UBG_WeaponFireComponent`는 유지하되 책임을 DataTable, equipped weapon actor, inventory ammo 기반으로 재정의
 
 비목표:
 
@@ -28,7 +28,7 @@ Dedicated Server 멀티플레이 환경에서 PUBG 스타일 무기, 탄약, 근
 
 - Weapon item: `EBG_ItemType::Weapon`과 `Item.Weapon.*` GameplayTag로 식별되는 보유/장비 데이터
 - World item: 바닥 pickup/drop 상태의 아이템 Actor. 무기와 비무기 모두 기존 `ABG_WorldItemBase` 흐름으로 표현
-- Equipped weapon actor: 캐릭터 socket에 붙는 `ABG_EquippedWeaponBase` 계열 Actor. 장착 mesh, muzzle, fire FX 위치를 표현
+- Equipped weapon actor: 캐릭터 socket에 붙는 `ABG_EquippedWeaponBase` 계열 Actor. 장착 mesh, muzzle, fire FX 위치와 무기 인스턴스 런타임 상태를 표현
 - Fire spec: 무기별 damage, range, fire mode, cooldown, spread, pellet, ammo cost, trace/projectile 정책을 담은 DataTable row
 - Active weapon slot: 현재 손에 들고 입력을 받는 `EBG_EquipmentSlot`
 - Unequip: 장비 슬롯에서 제거하지 않고 active slot만 `None`으로 바꿔 손에서 내리는 동작
@@ -46,7 +46,7 @@ Dedicated Server 멀티플레이 환경에서 PUBG 스타일 무기, 탄약, 근
 | Inventory | `UBG_InventoryComponent`가 owner-only FastArray, stack, weight, drop 처리 | 탄약 보관 기반 구현됨 |
 | Equipment | `UBG_EquipmentComponent`가 PrimaryA/B, Pistol, Melee, Throwable, Armor, Backpack, active slot 관리 | 장비 골격 구현됨. active slot 변경용 client request/InputAction 흐름 부족 |
 | World item | `ABG_WorldItemBase`가 pickup/drop, range, registry 검증, equipment 교체 처리 | 골격 구현됨. 무기/탄약 WorldItem Blueprint authoring은 대부분 없음 |
-| Weapon fire | WON `UBG_WeaponFireComponent`가 server line trace, semi/full auto, ammo state, reload timer 처리 | 임시 구현. fire spec 하드코딩, eye view trace, reload fallback 등 수정 대상이 많아 최종 구현에서는 참고만 함 |
+| Weapon fire | WON `UBG_WeaponFireComponent`가 server line trace, semi/full auto, ammo state, reload timer 처리 | 유지 대상. fire spec 하드코딩, eye view trace, reload fallback, ammo state 소유 책임을 재정의해야 함 |
 | Reload | active weapon row의 `AmmoItemTag`, `MagazineSize`, `ReloadDuration`를 읽고 Inventory ammo를 제거 | 기본 연결 있음. 단, 탄약 없음/제거 실패 시 code-only reload fallback 존재 |
 | Input | Attack/Reload/Interact/Inventory는 InputAction으로 연결 | 무기 교체/해제는 `One`, `Two`, `Zero` raw key가 `SetWeaponState` 직접 호출 |
 | Character adapter | `UBG_EquipmentComponent::ApplyActiveWeaponStateToCharacter()`가 active weapon을 `EBGWeaponPoseType`로 반영 | 재사용 가능. 단, 임시 입력이 adapter를 우회함 |
@@ -60,12 +60,11 @@ Dedicated Server 멀티플레이 환경에서 PUBG 스타일 무기, 탄약, 근
 - 요구한 “총알이 나가는 위치 등 mesh 관련 설정은 각 Actor Blueprint”는 아직 미구현. 현재 발사는 캐릭터 eye view에서 라인트레이스함
 - 요구한 “InputAction 기반 무기 교체와 장착 해제”는 아직 미구현. 현재 숫자 raw key가 EquipmentComponent를 우회함
 - 요구한 “인벤토리 탄약 소모 장전”은 부분 구현됨. 다만 fallback 때문에 탄약 없이도 장전될 수 있어 최종 요구사항과 충돌
-- World item과 equipped weapon actor는 분리하는 편이 DataTable과 lifecycle 관리에 더 적합함. pickup/drop, 수량, item state, 서버 검증은 `ABG_WorldItemBase`가 담당하고, muzzle/attach/fire FX는 `ABG_EquippedWeaponBase`가 담당
+- World item과 equipped weapon actor는 분리하는 편이 DataTable과 lifecycle 관리에 더 적합함. pickup/drop, 수량, drop 상태의 loaded ammo, 서버 검증은 `ABG_WorldItemBase`가 담당하고, equipped 상태의 loaded ammo, muzzle/attach, fire FX는 `ABG_EquippedWeaponBase`가 담당
 - 무기 전용 interface는 당장 필요하지 않음. equipped weapon actor는 상속 기반 virtual function과 Blueprint event로 확장하고, World item은 기존 `ABG_WorldItemBase` 계약을 재사용
 - Projectile 예측은 GAS의 Local Predicted 개념만 차용함. 클라이언트는 즉시 시각 결과를 예측하고 서버가 승인/거절하지만, GAS 의존성과 복잡한 prediction key stack은 도입하지 않음
 - 초깃값은 PUBG Wiki에 정리된 분석 수치를 그대로 seed로 사용함. DataTable row마다 별도 출처/조정 메타데이터는 두지 않고, 테스트에서 어색한 일부 수치만 직접 조정
-- 신규 C++는 GEONU 영역에 작성함. 전투 컴포넌트와 projectile actor는 `Source/PUBG_HotMode/GEONU/Combat`에 둠
-- WON `UBG_WeaponFireComponent`는 개조하지 않고 legacy/reference 구현으로만 둠
+- 신규 projectile actor와 fire spec 타입은 GEONU 영역에 작성하되, 캐릭터 전투 입력/발사 adapter는 기존 WON `UBG_WeaponFireComponent`를 유지해 개조함
 
 ## 확정 결정
 
@@ -88,17 +87,23 @@ Item.Ammo.9mm
 - 기존 `Item.Weapon.AR`, `Item.Weapon.SR`, `Item.Weapon.Pistol`, `Item.Weapon.Melee`는 분류 tag로만 사용
 - Fire spec은 별도 DataTable `DT_WeaponFireSpecs`로 분리하고 RowName은 weapon item tag와 동일
 - Weapon item row는 장비/인벤토리 계약을, Fire spec row는 발사 계약을 담당
-- 신규 전투 컴포넌트는 `Source/PUBG_HotMode/GEONU/Combat`의 `UBG_WeaponCombatComponent`로 작성
-- 기존 WON `UBG_WeaponFireComponent`는 최종 시스템에서 사용하지 않음
-- 기존 WON `UBG_WeaponFireComponent`는 Character에서 생성하지 않고 Attack/Reload/SetWeaponState/OnRep/Death 경로에서 호출하지 않아야 완전히 비활성화된 것으로 봄
-- `BP_BG_Character_WON` 등 Blueprint asset에 남은 `WeaponFireComponent` 참조는 Editor compile/resave로 정리 여부를 확인
+- 기존 WON `UBG_WeaponFireComponent`는 Character의 전투 adapter로 유지
+- `UBG_WeaponFireComponent`는 active equipment slot, `ABG_EquippedWeaponBase`, weapon item row, fire spec row를 조회하는 책임으로 재정의
+- `UBG_WeaponFireComponent`의 기존 hardcoded fire settings와 code-only reload fallback은 제거 또는 fallback 전용 debug path로 격리
+- Character의 Attack/Reload/SetWeaponState/OnRep/Death 경로는 `UBG_WeaponFireComponent`를 호출하되, EquipmentComponent와 equipped actor state를 우회하지 않아야 함
 - World item class는 공통 item row의 `WorldItemClass`로 관리
 - Equipped weapon class는 weapon item row의 `EquippedWeaponClass`로 관리
 - Equipped weapon actor base는 `AActor`를 상속한 `ABG_EquippedWeaponBase`로 구성
+- Equipped weapon actor가 equipped 상태의 무기 인스턴스 런타임 상태 source of truth를 소유
+- `UBG_EquipmentComponent`는 weapon slot, active slot, equipped actor lifecycle, item tag mapping을 관리하고 최종 구조에서 loaded ammo를 소유하지 않음
+- `FBG_WeaponItemDataRow::MagazineSize`, `AmmoItemTag`는 기본 authoring data이고, equip 시 `ABG_EquippedWeaponBase` 런타임 상태에 캐시
+- `ABG_WorldItemBase::WeaponLoadedAmmo`는 drop/pickup 이동 중 loaded ammo 보존용이며, equip 완료 후 source of truth가 아님
+- loaded ammo owner-only replication 여부는 현 단계에서 설계 제약으로 두지 않음. 정확한 탄 수 비공개가 필요해지면 별도 네트워크 hardening 범위에서 처리
 - Weapon-specific interface는 도입하지 않음
 - 각 무기는 world item Blueprint와 equipped weapon Blueprint를 분리
 - 각 world item Blueprint는 world mesh, pickup collision, world display transform을 소유
 - 각 equipped weapon Blueprint는 equipped mesh, muzzle component/socket, attach transform을 소유
+- Inventory UI preview용 transform/key는 WeaponSystem 전투 로직이 아니라 `InventoryEquipmentUI` 구현 범위에서 추가
 - 발사는 서버 권위로 처리하고, muzzle transform은 active equipped weapon actor에서 가져옴
 - M416, P92는 projectile actor 방식으로 구현
 - Kar98k는 hitscan line trace 방식으로 구현
@@ -110,7 +115,7 @@ Item.Ammo.9mm
 - Projectile 예측은 단순 `ShotPredictionId` 기반 구조로 구현
 - 클라이언트는 총구 FX, 탄 궤적, 임시 피격 FX를 예측하고 데미지, 체력, 킬, 확정 hit marker는 예측하지 않음
 - 장전은 Inventory ammo가 없으면 실패해야 하며 code-only fallback은 제거 대상
-- 무기 손해제는 active slot만 `None`으로 만들고 장비 슬롯의 무기와 loaded ammo는 유지
+- 무기 손해제는 active slot만 `None`으로 만들고 장비 슬롯의 equipped weapon actor와 actor 내부 loaded ammo는 유지
 - Drop은 기존 `RequestDropEquipment` 흐름을 유지해 월드 아이템으로 스폰
 
 ## 기능 명세
@@ -213,6 +218,8 @@ Equipped weapon base가 제공해야 하는 기능:
 - equipped mesh root
 - muzzle transform 조회
 - hand/back attach transform 조회
+- weapon item tag, ammo item tag, current loaded ammo, max magazine size 런타임 상태 조회
+- 서버 권위 loaded ammo 설정/소모 API
 - owner character 설정
 - fire FX hook
 - reload/equip hook
@@ -280,7 +287,7 @@ InputAction
   -> UBG_EquipmentComponent server request
   -> TryActivateWeapon(slot) 또는 TryActivateWeapon(None)
   -> ApplyActiveWeaponStateToCharacter
-  -> UBG_WeaponCombatComponent sync
+  -> UBG_WeaponFireComponent sync
 ```
 
 규칙:
@@ -297,13 +304,13 @@ InputAction
 
 ```text
 Attack Started/Completed
-  -> UBG_WeaponCombatComponent
+  -> UBG_WeaponFireComponent
   -> active slot + weapon item row + fire spec row
   -> equipped weapon actor muzzle transform
   -> ammo check
   -> server trace/projectile
   -> damage
-  -> loaded ammo update
+  -> active equipped weapon actor loaded ammo update
   -> fire animation/FX replication
 ```
 
@@ -321,8 +328,8 @@ Attack Started/Completed
 - P92는 semi-auto projectile actor로 구현
 - Kar98k는 bolt-action hitscan으로 구현
 - Pan은 non-aim attack에서 melee swing, aim + attack에서 thrown melee projectile로 구현
-- 총기 loaded ammo는 `UBG_EquipmentComponent` owner state가 source of truth
-- 발사 성공 시 `TryLoadAmmo(active slot, NewLoadedAmmo)`로 장탄 수 갱신
+- 총기 loaded ammo는 active `ABG_EquippedWeaponBase` runtime state가 source of truth
+- 발사 성공 시 active equipped weapon actor의 서버 권위 ammo consume API로 장탄 수 갱신
 - Magazine empty면 fire 실패. 자동 장전은 하지 않음
 
 ### Projectile
@@ -364,7 +371,7 @@ Local Attack
 - Kar98k hitscan tracer와 임시 impact FX
 - Pan throw predicted visual projectile와 trajectory arc
 - 임시 impact decal/particle. 서버 결과 수신 전까지 confirmed hit marker로 표현하지 않음
-- owner UI의 장탄 수는 즉시 감소 표시 가능하되 replicated equipment state로 최종 보정
+- owner UI의 장탄 수는 즉시 감소 표시 가능하되 active weapon actor runtime state로 최종 보정
 
 예측하지 않는 대상:
 
@@ -382,7 +389,7 @@ Local Attack
 - projectile class, initial speed, gravity scale은 Fire spec에서 조회
 - server request는 active slot, weapon tag, ammo, cooldown, reload state, death state, muzzle transform 허용 오차를 검증
 - projectile spawn 실패 시 ammo는 rollback하거나 발사 자체를 실패로 처리
-- server confirm은 `ShotPredictionId`, final muzzle transform, accepted ammo count를 owning client에 반환
+- server confirm은 `ShotPredictionId`, final muzzle transform, accepted loaded ammo count를 owning client에 반환
 - server reject는 `ShotPredictionId`와 실패 사유를 owning client에 반환하고 predicted visual을 제거
 - M416 projectile을 최초 기준 구현으로 삼고, P92와 Pan throw는 같은 prediction/confirm 구조를 재사용
 
@@ -398,7 +405,7 @@ Reload InputAction
   -> reload timer
   -> completion revalidation
   -> Inventory ammo consume
-  -> Equipment loaded ammo update
+  -> active equipped weapon actor loaded ammo update
 ```
 
 규칙:
@@ -409,6 +416,7 @@ Reload InputAction
 - Inventory ammo 없음: `MissingAmmo` 실패
 - 완료 시 필요한 탄약과 보유 탄약 중 작은 값만 장전
 - 완료 시 `TryRemoveItem(Ammo, AmmoItemTag, AmmoToLoad)`가 실패하면 장전 실패
+- 장전 완료 시 active equipped weapon actor의 서버 권위 ammo set API로 loaded ammo 갱신
 - code-only refill fallback 금지
 - reload 중 fire, weapon switch, unequip, death, item use interrupt 시 reload 취소
 
@@ -434,8 +442,14 @@ Reload InputAction
 규칙:
 
 - Inventory UI는 `UBG_InventoryViewModel` 경유 request만 호출
-- ViewModel은 equipment slot 표시, active slot, loaded ammo, reserve ammo, nearby world item 표시를 제공
-- weapon switch/unequip request도 ViewModel 또는 Character request API를 경유
+- ViewModel은 equipment slot 표시, active slot, loaded ammo, nearby world item 표시를 제공
+- ViewModel의 loaded ammo는 equipped weapon actor runtime state 또는 이를 감싼 read-only query API에서 읽음
+- reserve ammo와 magazine size의 정확한 무기 로직은 현 단계에서 보류하고 Inventory UI에서는 더미 표시를 허용
+- Inventory UI weapon slot 클릭은 active weapon 변경 request를 보내지 않음
+- active weapon 변경과 unequip은 WeaponSystem input action, Character request API, EquipmentComponent request API 경로에서 처리
+- Inventory UI drag/drop은 PrimaryA/B weapon slot 상호 교체와 장착 weapon 바닥 drop을 지원
+- Inventory UI weapon preview는 `EquippedWeaponClass` preview actor를 local-only로 capture하며 preview transform/key는 `InventoryEquipmentUI` 구현 범위에서 추가
+- 현 단계에서 preview용 스킨/부착물 runtime state는 없는 것으로 간주
 - Widget은 `UBG_EquipmentComponent` state를 직접 변경하지 않음
 
 ### 네트워크
@@ -446,7 +460,7 @@ Reload InputAction
 - `ShotPredictionId`는 owning client와 server 사이의 confirm/reject 매칭에만 사용
 - 원격 클라이언트는 public equipment state와 equipped weapon actor visual만 봄
 - 원격 클라이언트는 predicted projectile이 아니라 server replicated projectile/fire event만 봄
-- owner 클라이언트는 loaded ammo, reserve ammo, inventory quantity를 owner-only로 봄
+- owner 클라이언트는 자신의 inventory quantity와 UI 표시용 weapon ammo 값을 봄
 - 데미지, health, kill, item spawn/회수 가능 상태는 서버 결과만 반영
 - failure는 owning client RPC로 전달
 - null/invalid state는 silent fail 금지, 명시적 error log
@@ -457,8 +471,10 @@ Reload InputAction
 - 무기 world item pickup 후 적절한 Equipment slot에 장착되고 원격 클라이언트에 무기 visual 표시
 - `IA_BG_WeaponPrimaryA/B/Pistol/Melee`로 active slot 변경
 - `IA_BG_UnequipWeapon`으로 장비는 유지한 채 손에서 무기 내림
-- 장전 시 Inventory ammo가 감소하고 active weapon loaded ammo가 증가
-- Inventory ammo가 없으면 장전 실패하며 loaded ammo가 증가하지 않음
+- Inventory UI weapon slot 클릭으로 active slot이 변경되지 않음
+- Inventory UI PrimaryA/B drag/drop으로 두 weapon slot이 교체되고 바닥/drop 영역 drag/drop으로 weapon world item이 생성됨
+- 장전 시 Inventory ammo가 감소하고 active equipped weapon actor loaded ammo가 증가
+- Inventory ammo가 없으면 장전 실패하며 active equipped weapon actor loaded ammo가 증가하지 않음
 - M416은 projectile actor 기반 hold fire로 동작
 - M416 owner client는 발사 즉시 predicted projectile/FX를 보고 서버 confirm/reject로 정리
 - P92는 projectile actor 기반 single fire로 동작
@@ -475,8 +491,8 @@ Reload InputAction
 
 관련 코드:
 
-- `Source/PUBG_HotMode/GEONU/Combat/BG_WeaponCombatComponent.h`
-- `Source/PUBG_HotMode/GEONU/Combat/BG_WeaponCombatComponent.cpp`
+- `Source/PUBG_HotMode/WON/Public/Combat/BG_WeaponFireComponent.h`
+- `Source/PUBG_HotMode/WON/Private/Combat/BG_WeaponFireComponent.cpp`
 - `Source/PUBG_HotMode/GEONU/Combat/BG_WeaponProjectileBase.h`
 - `Source/PUBG_HotMode/GEONU/Combat/BG_WeaponProjectileBase.cpp`
 - `Source/PUBG_HotMode/GEONU/Combat/BG_EquippedWeaponBase.h`
@@ -535,7 +551,7 @@ Reload InputAction
 
 - DataTable 초깃값은 PUBG Wiki 분석 수치를 그대로 넣고, PIE 테스트에서 체감이 어색한 일부 수치만 조정
 - lag compensation/server rewind는 초기 범위 제외. 명중 판정 불만이 확인되면 별도 spec으로 작성
-- attachments, recoil pattern, armor별 damage multiplier, Pan bullet block은 초기 범위 제외
+- skins, attachments, recoil pattern, armor별 damage multiplier, Pan bullet block은 초기 범위 제외
 
 ## 참고 자료
 

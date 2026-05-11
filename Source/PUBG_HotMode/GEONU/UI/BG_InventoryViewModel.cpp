@@ -2,14 +2,19 @@
 
 #include "UI/BG_InventoryViewModel.h"
 
+#include "Combat/BG_EquippedWeaponBase.h"
 #include "Engine/GameInstance.h"
+#include "Engine/Texture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Inventory/BG_InventoryComponent.h"
 #include "Inventory/BG_ItemUseComponent.h"
 #include "Inventory/BG_ItemDataRegistrySubsystem.h"
 #include "Inventory/BG_ItemDataRow.h"
 #include "Inventory/BG_WorldItemBase.h"
+#include "Materials/MaterialInterface.h"
 #include "Player/BG_Character.h"
 #include "PUBG_HotMode/PUBG_HotMode.h"
+#include "UI/BG_WeaponIconCaptureComponent.h"
 
 namespace
 {
@@ -202,11 +207,102 @@ bool UBG_InventoryViewModel::DropInventoryItem(EBG_ItemType ItemType, FGameplayT
 
 bool UBG_InventoryViewModel::DropEquipment(EBG_EquipmentSlot EquipmentSlot)
 {
+	if (EquipmentSlot == EBG_EquipmentSlot::None)
+	{
+		LOGE(TEXT("%s: DropEquipment failed because EquipmentSlot was None."), *GetNameSafe(this));
+		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, EBG_ItemType::None, FGameplayTag());
+		return false;
+	}
+
 	UBG_EquipmentComponent* EquipmentComponent = GetBoundEquipmentComponent(TEXT("DropEquipment"));
 	if (!EquipmentComponent)
 		return false;
 
+	const FGameplayTag EquippedItemTag = EquipmentComponent->GetEquippedItemTag(EquipmentSlot);
+	if (!EquippedItemTag.IsValid())
+	{
+		LOGE(TEXT("%s: DropEquipment failed because slot %d was empty."),
+			*GetNameSafe(this), static_cast<int32>(EquipmentSlot));
+		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, GetItemTypeForEquipmentSlot(EquipmentSlot),
+		                       EquippedItemTag);
+		return false;
+	}
+
 	EquipmentComponent->DropEquipment(EquipmentSlot);
+	return true;
+}
+
+bool UBG_InventoryViewModel::SwapWeaponSlots(EBG_EquipmentSlot SourceSlot, EBG_EquipmentSlot TargetSlot)
+{
+	if (!IsPrimaryWeaponSlot(SourceSlot) || !IsPrimaryWeaponSlot(TargetSlot) || SourceSlot == TargetSlot)
+	{
+		LOGE(TEXT("%s: SwapWeaponSlots failed because SourceSlot=%d and TargetSlot=%d are not a valid PrimaryA/B pair."),
+			*GetNameSafe(this), static_cast<int32>(SourceSlot), static_cast<int32>(TargetSlot));
+		NotifyInventoryFailure(EBGInventoryFailReason::SlotMismatch, EBG_ItemType::Weapon, FGameplayTag());
+		return false;
+	}
+
+	UBG_EquipmentComponent* EquipmentComponent = GetBoundEquipmentComponent(TEXT("SwapWeaponSlots"));
+	if (!EquipmentComponent)
+		return false;
+
+	const FGameplayTag SourceItemTag = EquipmentComponent->GetEquippedItemTag(SourceSlot);
+	const FGameplayTag TargetItemTag = EquipmentComponent->GetEquippedItemTag(TargetSlot);
+	if (!SourceItemTag.IsValid() || !TargetItemTag.IsValid())
+	{
+		LOGE(TEXT("%s: SwapWeaponSlots failed because SourceSlot=%d or TargetSlot=%d was empty."),
+			*GetNameSafe(this), static_cast<int32>(SourceSlot), static_cast<int32>(TargetSlot));
+		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, EBG_ItemType::Weapon,
+		                       SourceItemTag.IsValid() ? TargetItemTag : SourceItemTag);
+		return false;
+	}
+
+	EquipmentComponent->SwapWeaponSlots(SourceSlot, TargetSlot);
+	return true;
+}
+
+bool UBG_InventoryViewModel::SelectThrowable(FGameplayTag ThrowableItemTag)
+{
+	if (!ThrowableItemTag.IsValid())
+	{
+		LOGE(TEXT("%s: SelectThrowable failed because ThrowableItemTag was invalid."), *GetNameSafe(this));
+		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, EBG_ItemType::Throwable, ThrowableItemTag);
+		return false;
+	}
+
+	UBG_EquipmentComponent* EquipmentComponent = GetBoundEquipmentComponent(TEXT("SelectThrowable"));
+	if (!EquipmentComponent)
+		return false;
+
+	UBG_InventoryComponent* InventoryComponent = GetBoundInventoryComponent(TEXT("SelectThrowable"));
+	if (!InventoryComponent)
+		return false;
+
+	if (!FindItemRow(EBG_ItemType::Throwable, ThrowableItemTag, TEXT("SelectThrowable")))
+	{
+		NotifyInventoryFailure(EBGInventoryFailReason::InvalidItem, EBG_ItemType::Throwable, ThrowableItemTag);
+		return false;
+	}
+
+	if (InventoryComponent->GetQuantity(EBG_ItemType::Throwable, ThrowableItemTag) <= 0)
+	{
+		LOGE(TEXT("%s: SelectThrowable failed because inventory has no throwable %s."),
+			*GetNameSafe(this), *ThrowableItemTag.ToString());
+		NotifyInventoryFailure(EBGInventoryFailReason::InvalidQuantity, EBG_ItemType::Throwable, ThrowableItemTag);
+		return false;
+	}
+
+	EquipmentComponent->SetThrowable(ThrowableItemTag);
+	return true;
+}
+
+bool UBG_InventoryViewModel::ClearThrowable()
+{
+	UBG_EquipmentComponent* EquipmentComponent = GetBoundEquipmentComponent(TEXT("ClearThrowable"));
+	if (!EquipmentComponent)
+		return false;
+
+	EquipmentComponent->ClearThrowable();
 	return true;
 }
 
@@ -276,6 +372,26 @@ void UBG_InventoryViewModel::ForceBroadcastAll()
 	OnEquipmentSlotsChanged.Broadcast();
 	OnNearbyWorldItemsChanged.Broadcast();
 	OnItemUseChanged.Broadcast(ItemUseData);
+}
+
+bool UBG_InventoryViewModel::GetEquipmentSlotData(
+	EBG_EquipmentSlot Slot,
+	FBGEquipmentSlotRenderData& OutSlotData) const
+{
+	OutSlotData = FBGEquipmentSlotRenderData();
+
+	if (Slot == EBG_EquipmentSlot::None)
+		return false;
+
+	if (const FBGEquipmentSlotRenderData* SlotData = EquipmentSlots.Find(Slot))
+	{
+		OutSlotData = *SlotData;
+		return true;
+	}
+
+	OutSlotData.Slot = Slot;
+	OutSlotData.ItemType = GetItemTypeForEquipmentSlot(Slot);
+	return false;
 }
 
 // --- Binding ------------
@@ -479,7 +595,7 @@ void UBG_InventoryViewModel::RefreshEquipmentRenderData()
 
 	for (const EBG_EquipmentSlot Slot : EquipmentSlotRenderOrder)
 	{
-		EquipmentSlots.Add(BuildEquipmentSlotRenderData(Slot));
+		EquipmentSlots.Add(Slot, BuildEquipmentSlotRenderData(Slot));
 	}
 }
 
@@ -592,7 +708,19 @@ FBGEquipmentSlotRenderData UBG_InventoryViewModel::BuildEquipmentSlotRenderData(
 
 	if (RenderData.ItemType == EBG_ItemType::Weapon)
 	{
-		RenderData.LoadedAmmo = EquipmentComponent->GetLoadedAmmo(Slot);
+		RenderData.bCanDrag = IsPrimaryWeaponSlot(Slot);
+		RenderData.bCanDropToGround = IsWeaponSlot(Slot);
+		RenderData.bCanSwapWithPrimarySlot = IsPrimaryWeaponSlot(Slot);
+
+		if (const ABG_EquippedWeaponBase* WeaponActor = EquipmentComponent->GetEquippedWeaponActor(Slot))
+		{
+			RenderData.LoadedAmmo = WeaponActor->GetLoadedAmmo();
+		}
+		else
+		{
+			LOGE(TEXT("%s could not read loaded ammo because slot %d has no equipped weapon actor."),
+				*GetNameSafe(this), static_cast<int32>(Slot));
+		}
 	}
 	else if (RenderData.ItemType == EBG_ItemType::Armor)
 	{
@@ -601,7 +729,8 @@ FBGEquipmentSlotRenderData UBG_InventoryViewModel::BuildEquipmentSlotRenderData(
 	else if (RenderData.ItemType == EBG_ItemType::Throwable)
 	{
 		const UBG_InventoryComponent* InventoryComponent = BoundInventoryComponent.Get();
-				if (InventoryComponent){
+		if (InventoryComponent)
+		{
 			RenderData.Quantity = InventoryComponent->GetQuantity(EBG_ItemType::Throwable, RenderData.ItemTag);
 		}
 		else
@@ -617,7 +746,41 @@ FBGEquipmentSlotRenderData UBG_InventoryViewModel::BuildEquipmentSlotRenderData(
 		return RenderData;
 
 	ApplyItemDisplayData(*ItemRow, RenderData.DisplayName, RenderData.Description, RenderData.Icon);
+
+	if (RenderData.ItemType == EBG_ItemType::Weapon)
+	{
+		const FBG_WeaponItemDataRow* WeaponRow = static_cast<const FBG_WeaponItemDataRow*>(ItemRow);
+		if (!WeaponRow->EquippedWeaponClass.IsNull())
+		{
+			RenderData.PreviewIconKey = UBG_WeaponIconCaptureComponent::MakePreviewIconKey(
+				RenderData.ItemTag,
+				RenderData.Slot,
+				WeaponRow->EquippedWeaponClass);
+			RenderData.bUseRuntimePreviewIcon = !RenderData.PreviewIconKey.IsNone();
+		}
+		else
+		{
+			LOGE(TEXT("%s could not enable runtime preview because weapon row %s had no EquippedWeaponClass."),
+				*GetNameSafe(this),
+				*RenderData.ItemTag.ToString());
+		}
+	}
+	else if (RenderData.ItemType == EBG_ItemType::Armor)
+	{
+		const FBG_ArmorItemDataRow* ArmorRow = static_cast<const FBG_ArmorItemDataRow*>(ItemRow);
+		RenderData.MaxDurability = FMath::Max(0.f, ArmorRow->MaxDurability);
+		RenderData.EquipmentLevel = FMath::Max(0, ArmorRow->EquipmentLevel);
+	}
+	else if (RenderData.ItemType == EBG_ItemType::Backpack)
+	{
+		const FBG_BackpackItemDataRow* BackpackRow = static_cast<const FBG_BackpackItemDataRow*>(ItemRow);
+		RenderData.EquipmentLevel = FMath::Max(0, BackpackRow->EquipmentLevel);
+		RenderData.BackpackWeightBonus = FMath::Max(0.f, BackpackRow->WeightBonus);
+	}
+
 	RenderData.bHasDisplayRow = true;
+	RenderData.PreviewIconResource = ResolveEquipmentPreviewIconResource(RenderData);
+	RenderData.bHasPreviewIconBrush = BuildPreviewIconBrush(RenderData.PreviewIconResource, RenderData.PreviewIconBrush);
 	return RenderData;
 }
 
@@ -706,6 +869,83 @@ FBGItemUseRenderData UBG_InventoryViewModel::BuildItemUseRenderData() const
 	ApplyItemDisplayData(*ItemRow, RenderData.DisplayName, RenderData.Description, RenderData.Icon);
 	RenderData.bHasDisplayRow = true;
 	return RenderData;
+}
+
+UObject* UBG_InventoryViewModel::ResolveEquipmentPreviewIconResource(
+	const FBGEquipmentSlotRenderData& RenderData) const
+{
+	if (!RenderData.bEquipped || !RenderData.bUseRuntimePreviewIcon)
+	{
+		return nullptr;
+	}
+
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		LOGE(TEXT("%s could not resolve equipment preview icon resource because owner was null."),
+			*GetNameSafe(this));
+		return nullptr;
+	}
+
+	UBG_WeaponIconCaptureComponent* WeaponIconCaptureComponent =
+		OwnerActor->FindComponentByClass<UBG_WeaponIconCaptureComponent>();
+	if (!WeaponIconCaptureComponent)
+	{
+		LOGE(TEXT("%s could not resolve equipment preview icon resource because owner %s had no WeaponIconCaptureComponent."),
+			*GetNameSafe(this),
+			*GetNameSafe(OwnerActor));
+		return nullptr;
+	}
+
+	return WeaponIconCaptureComponent->GetOrCreateWeaponSlotIconResource(RenderData);
+}
+
+bool UBG_InventoryViewModel::BuildPreviewIconBrush(UObject* PreviewIconResource, FSlateBrush& OutBrush) const
+{
+	OutBrush = FSlateBrush();
+	if (!PreviewIconResource)
+		return false;
+
+	OutBrush.SetResourceObject(PreviewIconResource);
+	OutBrush.DrawAs = ESlateBrushDrawType::Image;
+
+	if (const UTextureRenderTarget2D* RenderTarget = Cast<UTextureRenderTarget2D>(PreviewIconResource))
+	{
+		OutBrush.ImageSize = FVector2D(
+			static_cast<float>(RenderTarget->SizeX),
+			static_cast<float>(RenderTarget->SizeY));
+		return true;
+	}
+
+	if (const UTexture2D* Texture = Cast<UTexture2D>(PreviewIconResource))
+	{
+		OutBrush.ImageSize = FVector2D(
+			static_cast<float>(Texture->GetSizeX()),
+			static_cast<float>(Texture->GetSizeY()));
+		return true;
+	}
+
+	if (Cast<UMaterialInterface>(PreviewIconResource))
+	{
+		OutBrush.ImageSize = FVector2D(512.f, 256.f);
+
+		if (const AActor* OwnerActor = GetOwner())
+		{
+			if (const UBG_WeaponIconCaptureComponent* WeaponIconCaptureComponent =
+				OwnerActor->FindComponentByClass<UBG_WeaponIconCaptureComponent>())
+			{
+				OutBrush.ImageSize = WeaponIconCaptureComponent->GetPreviewRenderTargetSize();
+			}
+		}
+
+		return true;
+	}
+
+	LOGE(TEXT("%s could not build preview icon brush because resource %s was not a supported texture or material type."),
+		*GetNameSafe(this),
+		*GetNameSafe(PreviewIconResource));
+	OutBrush = FSlateBrush();
+	return false;
 }
 
 void UBG_InventoryViewModel::ApplyItemDisplayData(
@@ -863,6 +1103,19 @@ EBG_ItemType UBG_InventoryViewModel::GetItemTypeForEquipmentSlot(EBG_EquipmentSl
 	default:
 		return EBG_ItemType::None;
 	}
+}
+
+bool UBG_InventoryViewModel::IsWeaponSlot(EBG_EquipmentSlot Slot)
+{
+	return Slot == EBG_EquipmentSlot::PrimaryA
+		|| Slot == EBG_EquipmentSlot::PrimaryB
+		|| Slot == EBG_EquipmentSlot::Pistol
+		|| Slot == EBG_EquipmentSlot::Melee;
+}
+
+bool UBG_InventoryViewModel::IsPrimaryWeaponSlot(EBG_EquipmentSlot Slot)
+{
+	return Slot == EBG_EquipmentSlot::PrimaryA || Slot == EBG_EquipmentSlot::PrimaryB;
 }
 
 FText UBG_InventoryViewModel::GetFallbackItemName(const FGameplayTag& ItemTag)

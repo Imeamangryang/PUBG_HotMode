@@ -8,6 +8,7 @@
 #include "UI/BG_HealthViewModel.h"
 #include "Inventory/BG_EquipmentComponent.h"
 #include "UI/BG_InventoryViewModel.h"
+#include "UI/BG_WeaponIconCaptureComponent.h"
 #include "Inventory/BG_ItemTypes.h"
 #include "Player/BG_Character.h"
 #include "Blueprint/UserWidget.h"
@@ -49,6 +50,8 @@ namespace
 	}
 
 	const FName BandageItemTagName(TEXT("Item.Heal.Bandage"));
+	constexpr int32 InventoryHUDZOrder = 50;
+	constexpr int32 GameHUDZOrder = 75;
 }
 
 
@@ -56,6 +59,7 @@ ABG_PlayerController::ABG_PlayerController()
 {
 	EXT_CREATE_DEFAULT_SUBOBJECT(HealthViewModel);
 	EXT_CREATE_DEFAULT_SUBOBJECT(InventoryViewModel);
+	EXT_CREATE_DEFAULT_SUBOBJECT(WeaponIconCaptureComponent);
 	Ext::SetClass(GameHUDWidgetClass, TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/GEONU/Blueprints/Widgets/WBP_GameHUD.WBP_GameHUD_C'"));
 	Ext::SetClass(InventoryWidgetClass, TEXT("/Script/UMGEditor.WidgetBlueprint'/Game/GEONU/Blueprints/Widgets/WBP_InventoryHUD.WBP_InventoryHUD_C'"));
 }
@@ -225,6 +229,15 @@ void ABG_PlayerController::CloseInventoryUI()
 
 	InventoryWidget->SetVisibility(ESlateVisibility::Collapsed);
 
+	if (WeaponIconCaptureComponent)
+	{
+		WeaponIconCaptureComponent->ClearPreviewCache();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: CloseInventoryUI could not clear weapon preview cache because WeaponIconCaptureComponent was null."), *GetNameSafe(this));
+	}
+
 	FInputModeGameOnly InputMode;
 	SetInputMode(InputMode);
 	bShowMouseCursor = false;
@@ -255,7 +268,8 @@ void ABG_PlayerController::EnsureGameHUDWidget()
 
 	if (GameHUDWidget)
 	{
-		if (!GameHUDWidget->IsInViewport() && !GameHUDWidget->AddToPlayerScreen())
+		GameHUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+		if (!GameHUDWidget->IsInViewport() && !GameHUDWidget->AddToPlayerScreen(GameHUDZOrder))
 		{
 			UE_LOG(LogTemp, Error, TEXT("%s: EnsureGameHUDWidget failed to add existing GameHUDWidget to player screen."), *GetNameSafe(this));
 		}
@@ -275,7 +289,8 @@ void ABG_PlayerController::EnsureGameHUDWidget()
 		return;
 	}
 
-	if (!GameHUDWidget->AddToPlayerScreen())
+	GameHUDWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+	if (!GameHUDWidget->AddToPlayerScreen(GameHUDZOrder))
 	{
 		UE_LOG(LogTemp, Error, TEXT("%s: EnsureGameHUDWidget failed to add GameHUDWidget to player screen."), *GetNameSafe(this));
 	}
@@ -290,7 +305,7 @@ bool ABG_PlayerController::EnsureInventoryWidget()
 
 	if (InventoryWidget)
 	{
-		if (!InventoryWidget->IsInViewport() && !InventoryWidget->AddToPlayerScreen(50))
+		if (!InventoryWidget->IsInViewport() && !InventoryWidget->AddToPlayerScreen(InventoryHUDZOrder))
 		{
 			UE_LOG(LogTemp, Error, TEXT("%s: EnsureInventoryWidget failed to add existing InventoryWidget to player screen."), *GetNameSafe(this));
 			return false;
@@ -313,7 +328,7 @@ bool ABG_PlayerController::EnsureInventoryWidget()
 	}
 
 	InventoryWidget->SetVisibility(ESlateVisibility::Collapsed);
-	if (!InventoryWidget->AddToPlayerScreen(50))
+	if (!InventoryWidget->AddToPlayerScreen(InventoryHUDZOrder))
 	{
 		UE_LOG(LogTemp, Error, TEXT("%s: EnsureInventoryWidget failed to add InventoryWidget to player screen."), *GetNameSafe(this));
 		return false;
@@ -696,7 +711,12 @@ void ABG_PlayerController::HandleControlledCharacterDeath(ABG_Character* DeadCha
 
 	if (HasAuthority())
 	{
+		Client_ShowEndUI();
 		StartSpectatingOnly();
+	}
+	else if (IsLocalController())
+	{
+		ShowEndUI();
 	}
 
 	PrepareSpectatorMode(DeadCharacter);
@@ -910,4 +930,92 @@ void ABG_PlayerController::TryExitAirplane()
 
 	BGCharacter->Server_BeginAirplaneDrop(DropLocation, DropForwardVector);
 	EndAirplaneView();
+}
+
+void ABG_PlayerController::ShowEndUI()
+{
+	UE_LOG(LogTemp, Warning,
+	TEXT("%s: ShowEndUI called. Local=%d EndUIWidgetClass=%s"),
+	*GetNameSafe(this),
+	IsLocalController() ? 1 : 0,
+	*GetNameSafe(EndUIWidgetClass));
+	
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (EndUIWidget)
+	{
+		if (!EndUIWidget->IsInViewport())
+		{
+			EndUIWidget->AddToPlayerScreen(200);
+		}
+		return;
+	}
+
+	if (!EndUIWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: ShowEndUI failed because EndUIWidgetClass was null."), *GetNameSafe(this));
+		return;
+	}
+
+	EndUIWidget = CreateWidget<UUserWidget>(this, EndUIWidgetClass);
+	if (!EndUIWidget)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: ShowEndUI failed because CreateWidget returned null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (!EndUIWidget->AddToPlayerScreen(200))
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: ShowEndUI failed to add widget to player screen."), *GetNameSafe(this));
+		EndUIWidget = nullptr;
+	}
+}
+
+void ABG_PlayerController::ShowChickenUI()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (ChickenUIWidget)
+	{
+		if (!ChickenUIWidget->IsInViewport())
+		{
+			ChickenUIWidget->AddToPlayerScreen(210);
+		}
+		return;
+	}
+
+	if (!ChickenUIWidgetClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: ShowChickenUI failed because ChickenUIWidgetClass was null."), *GetNameSafe(this));
+		return;
+	}
+
+	ChickenUIWidget = CreateWidget<UUserWidget>(this, ChickenUIWidgetClass);
+	if (!ChickenUIWidget)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: ShowChickenUI failed because CreateWidget returned null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (!ChickenUIWidget->AddToPlayerScreen(210))
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: ShowChickenUI failed to add widget to player screen."), *GetNameSafe(this));
+		ChickenUIWidget = nullptr;
+	}
+}
+
+void ABG_PlayerController::Client_ShowChickenUI_Implementation()
+{
+	ShowChickenUI();
+}
+
+void ABG_PlayerController::Client_ShowEndUI_Implementation()
+{
+	ShowEndUI();
 }

@@ -104,7 +104,7 @@ protected:
 	void HandleDamaged(float DamageAmount, float CurrentHP, float MaxHP, bool bNewIsDead);
 
 	void ApplyWeaponMovementState();
-
+ 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 public:

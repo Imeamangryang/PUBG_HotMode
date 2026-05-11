@@ -78,6 +78,9 @@ public: // --- Weapon Geometry ---
 	UFUNCTION(BlueprintCallable, Category="Equipped Weapon")
 	void SetBackAttachTransform(const FTransform& NewBackAttachTransform);
 
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Preview")
+	FTransform GetPreviewTransform() const { return InventoryPreviewTransform; }
+
 public: // --- Gameplay Hooks ---
 	UFUNCTION(BlueprintCallable, Category="Equipped Weapon")
 	void NotifyEquipped();
@@ -192,6 +195,9 @@ private: // --- Authoring Data ---
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Attach", meta=(AllowPrivateAccess="true"))
 	FTransform BackAttachTransform = FTransform::Identity;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Preview", meta=(AllowPrivateAccess="true"))
+	FTransform InventoryPreviewTransform = FTransform::Identity;
 
 	// These authoring values let BP child weapon actors drive pose/ammo defaults before table data is wired in.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime", meta=(AllowPrivateAccess="true"))

@@ -44,9 +44,6 @@ public:
 	void SetPreparationTimeRemaining(int32 NewTimeRemaining);
 
 	UFUNCTION(BlueprintPure, Category = "BG|Lobby")
-	TArray<APlayerState*> GetLobbyPlayerStates() const;
-
-	UFUNCTION(BlueprintPure, Category = "BG|Lobby")
 	TArray<FString> GetLobbyPlayerNames() const;
 
 	UFUNCTION(BlueprintCallable, Category = "BG|Lobby")

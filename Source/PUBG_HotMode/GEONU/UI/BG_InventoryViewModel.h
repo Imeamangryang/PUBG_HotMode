@@ -9,6 +9,7 @@
 #include "Inventory/BG_EquipmentComponent.h"
 #include "Inventory/BG_ItemUseComponent.h"
 #include "Inventory/BG_ItemTypes.h"
+#include "Styling/SlateBrush.h"
 #include "BG_InventoryViewModel.generated.h"
 
 class ABG_Character;
@@ -81,14 +82,38 @@ struct PUBG_HOTMODE_API FBGEquipmentSlotRenderData
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
 	TSoftObjectPtr<UTexture2D> Icon;
 
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	TObjectPtr<UObject> PreviewIconResource = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	FSlateBrush PreviewIconBrush;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	bool bHasPreviewIconBrush = false;
+
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(ClampMin="0"))
 	int32 Quantity = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(ClampMin="0"))
 	int32 LoadedAmmo = 0;
 
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(ClampMin="0"))
+	int32 MagazineSize = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(ClampMin="0"))
+	int32 ReserveAmmo = 0;
+
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(ClampMin="0.0"))
 	float Durability = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(ClampMin="0.0"))
+	float MaxDurability = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(ClampMin="0"))
+	int32 EquipmentLevel = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(ClampMin="0.0"))
+	float BackpackWeightBonus = 0.f;
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
 	bool bEquipped = false;
@@ -98,6 +123,21 @@ struct PUBG_HOTMODE_API FBGEquipmentSlotRenderData
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
 	bool bHasDisplayRow = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	bool bUseRuntimePreviewIcon = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	FName PreviewIconKey;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	bool bCanDrag = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	bool bCanDropToGround = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	bool bCanSwapWithPrimarySlot = false;
 };
 
 USTRUCT(BlueprintType)
@@ -236,6 +276,15 @@ public: // --- Commands ---
 	bool DropEquipment(EBG_EquipmentSlot EquipmentSlot);
 
 	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool SwapWeaponSlots(EBG_EquipmentSlot SourceSlot, EBG_EquipmentSlot TargetSlot);
+
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool SelectThrowable(FGameplayTag ThrowableItemTag);
+
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool ClearThrowable();
+
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
 	bool UseInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag);
 
 	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
@@ -257,7 +306,10 @@ public: // --- Render Data Getters ---
 	TArray<FBGInventoryItemRenderData> GetInventoryItems() const { return InventoryItems; }
 
 	UFUNCTION(BlueprintPure, Category="Inventory UI")
-	TArray<FBGEquipmentSlotRenderData> GetEquipmentSlots() const { return EquipmentSlots; }
+	TMap<EBG_EquipmentSlot, FBGEquipmentSlotRenderData> GetEquipmentSlots() const { return EquipmentSlots; }
+
+	UFUNCTION(BlueprintPure, Category="Inventory UI")
+	bool GetEquipmentSlotData(EBG_EquipmentSlot Slot, FBGEquipmentSlotRenderData& OutSlotData) const;
 
 	UFUNCTION(BlueprintPure, Category="Inventory UI")
 	TArray<FBGNearbyWorldItemRenderData> GetNearbyWorldItems() const { return NearbyWorldItems; }
@@ -334,6 +386,8 @@ private: // --- Render Data ---
 	FBGInventoryFailureRenderData BuildFailureRenderData(
 		EBGInventoryFailReason FailReason, EBG_ItemType ItemType, const FGameplayTag& ItemTag) const;
 	FBGItemUseRenderData BuildItemUseRenderData() const;
+	UObject* ResolveEquipmentPreviewIconResource(const FBGEquipmentSlotRenderData& RenderData) const;
+	bool BuildPreviewIconBrush(UObject* PreviewIconResource, FSlateBrush& OutBrush) const;
 
 	void ApplyItemDisplayData(const FBG_ItemDataRow& ItemRow, FText& OutDisplayName, FText& OutDescription,
 	                          TSoftObjectPtr<UTexture2D>& OutIcon) const;
@@ -352,6 +406,8 @@ private: // --- Component Access ---
 
 private: // --- Utility ---
 	static EBG_ItemType GetItemTypeForEquipmentSlot(EBG_EquipmentSlot Slot);
+	static bool IsWeaponSlot(EBG_EquipmentSlot Slot);
+	static bool IsPrimaryWeaponSlot(EBG_EquipmentSlot Slot);
 	static FText GetFallbackItemName(const FGameplayTag& ItemTag);
 
 private: // --- Cached Bindings ---
@@ -374,7 +430,7 @@ private: // --- Cached Render Data ---
 	TArray<FBGInventoryItemRenderData> InventoryItems;
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(AllowPrivateAccess="true"))
-	TArray<FBGEquipmentSlotRenderData> EquipmentSlots;
+	TMap<EBG_EquipmentSlot, FBGEquipmentSlotRenderData> EquipmentSlots;
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(AllowPrivateAccess="true"))
 	TArray<FBGNearbyWorldItemRenderData> NearbyWorldItems;

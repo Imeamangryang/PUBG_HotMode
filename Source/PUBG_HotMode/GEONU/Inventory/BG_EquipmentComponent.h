@@ -156,6 +156,9 @@ public: // --- Equipment Commands ---
 	UFUNCTION(BlueprintCallable, Category="Equipment|Weapon")
 	void ActivateWeapon(EBG_EquipmentSlot WeaponSlot);
 
+	UFUNCTION(BlueprintCallable, Category="Equipment|Weapon")
+	void SwapWeaponSlots(EBG_EquipmentSlot SourceSlot, EBG_EquipmentSlot TargetSlot);
+
 	UFUNCTION(BlueprintCallable, Category="Equipment|Throwable")
 	void SetThrowable(FGameplayTag ThrowableItemTag);
 
@@ -173,6 +176,9 @@ public: // --- Authority C++ API ---
 	                        FGameplayTag& OutRemovedWeaponItemTag, int32& OutRemovedLoadedAmmo);
 
 	bool Auth_ActivateWeapon(EBG_EquipmentSlot WeaponSlot);
+
+	bool Auth_SwapWeaponSlots(EBG_EquipmentSlot SourceSlot, EBG_EquipmentSlot TargetSlot,
+	                          EBGInventoryFailReason& OutFailReason);
 
 	bool Auth_LoadAmmo(EBG_EquipmentSlot WeaponSlot, int32 LoadedAmmo);
 
@@ -253,6 +259,9 @@ private: // --- Validation ---
 	void Server_ActivateWeapon(EBG_EquipmentSlot WeaponSlot);
 
 	UFUNCTION(Server, Reliable)
+	void Server_SwapWeaponSlots(EBG_EquipmentSlot SourceSlot, EBG_EquipmentSlot TargetSlot);
+
+	UFUNCTION(Server, Reliable)
 	void Server_SetThrowable(FGameplayTag ThrowableItemTag);
 
 	UFUNCTION(Server, Reliable)
@@ -268,6 +277,7 @@ private: // --- Validation ---
 	bool Auth_DropThrowable(EBGInventoryFailReason& OutFailReason);
 
 	bool IsWeaponSlot(EBG_EquipmentSlot Slot) const;
+	bool IsPrimaryWeaponSlot(EBG_EquipmentSlot Slot) const;
 	bool IsArmorSlot(EBG_EquipmentSlot Slot) const;
 
 	bool IsWeaponSlotCompatible(EBG_EquipmentSlot Slot, const FBG_WeaponItemDataRow& WeaponRow) const;
