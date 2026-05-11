@@ -1,4 +1,4 @@
-Name,ItemType,ItemTag,DisplayName,Description,Icon,WorldItemClass,UnitWeight,bStackable,MaxStackSize,EquipSlot,EquipmentLevel,MaxDurability,DamageReduction
+﻿Name,ItemType,ItemTag,DisplayName,Description,Icon,WorldItemClass,UnitWeight,bStackable,MaxStackSize,EquipSlot,EquipmentLevel,MaxDurability,DamageReduction
 Item.Equipment.Helmet.Lv1,Armor,Item.Equipment.Helmet.Lv1,Helmet Lv1,Level 1 helmet,Texture2D'/Game/GEONU/Textures/T_Helmet1.T_Helmet1',,0.0,false,1,Helmet,1,80.0,0.30
 Item.Equipment.Helmet.Lv2,Armor,Item.Equipment.Helmet.Lv2,Helmet Lv2,Level 2 helmet,Texture2D'/Game/GEONU/Textures/T_Helmet2.T_Helmet2',,0.0,false,1,Helmet,2,150.0,0.40
 Item.Equipment.Helmet.Lv3,Armor,Item.Equipment.Helmet.Lv3,Helmet Lv3,Level 3 helmet,Texture2D'/Game/GEONU/Textures/T_Helmet3.T_Helmet3',,0.0,false,1,Helmet,3,230.0,0.55

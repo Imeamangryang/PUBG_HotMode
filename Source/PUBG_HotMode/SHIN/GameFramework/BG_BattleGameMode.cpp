@@ -1,6 +1,7 @@
 ﻿#include "BG_BattleGameMode.h"
 #include "BG_GameState.h"
 #include "Player/BG_PlayerController.h"
+#include "Player/BG_Character.h"
 #include "Actors/BG_Airplane.h"
 #include "Utils/BG_LogHelper.h"
 #include "Kismet/GameplayStatics.h"
@@ -139,9 +140,9 @@ void ABG_BattleGameMode::SpawnAndPossessPlayer(APlayerController* NewPlayer)
 
 void ABG_BattleGameMode::HandlePlayerDeath_Implementation(AController* VictimController, APawn* VictimPawn)
 {
-	if (!VictimController)
+	if (!VictimPawn)
 	{
-		BG_SHIN_LOG_ERROR(TEXT("HandlePlayerDeath failed because VictimController was null"));
+		BG_SHIN_LOG_ERROR(TEXT("HandlePlayerDeath failed because VictimPawn was null"));
 		return;
 	}
 
@@ -149,6 +150,14 @@ void ABG_BattleGameMode::HandlePlayerDeath_Implementation(AController* VictimCon
 		TEXT("VictimController=%s VictimPawn=%s"),
 		*BGLogHelper::SafeName(VictimController),
 		*BGLogHelper::SafeName(VictimPawn));
+
+	if (!VictimController)
+	{
+		BG_SHIN_LOG_WARN(TEXT("HandlePlayerDeath received null VictimController. Continuing with alive-player evaluation."));
+	}
+
+	
+	EvaluateMatchEnd();
 }
 
 void ABG_BattleGameMode::StartPreparationPhase()
@@ -243,4 +252,119 @@ void ABG_BattleGameMode::TickPreparationPhase()
 		}
 		BG_SHIN_LOG_INFO(TEXT("Preparation phase ended. MatchState set to Combat"));
 	}
+}
+
+int32 ABG_BattleGameMode::GetAlivePlayerCount() const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return 0;
+	}
+
+	int32 AlivePlayerCount = 0;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		const APlayerController* PlayerController = It->Get();
+		if (!PlayerController)
+		{
+			continue;
+		}
+
+		const ABG_Character* Character = Cast<ABG_Character>(PlayerController->GetPawn());
+		if (!Character)
+		{
+			continue;
+		}
+
+		if (Character->GetCharacterState() != EBGCharacterState::Dead)
+		{
+			++AlivePlayerCount;
+		}
+	}
+
+	return AlivePlayerCount;
+}
+
+AController* ABG_BattleGameMode::GetLastAlivePlayerController() const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PlayerController = It->Get();
+		if (!PlayerController)
+		{
+			continue;
+		}
+
+		ABG_Character* Character = Cast<ABG_Character>(PlayerController->GetPawn());
+		if (!Character)
+		{
+			continue;
+		}
+
+		if (Character->GetCharacterState() != EBGCharacterState::Dead)
+		{
+			return PlayerController;
+		}
+	}
+
+	return nullptr;
+}
+
+void ABG_BattleGameMode::EvaluateMatchEnd()
+{
+	ABG_GameState* BGGameState = GetGameState<ABG_GameState>();
+	if (!BGGameState)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("EvaluateMatchEnd failed because GameState was null"));
+		return;
+	}
+
+	if (BGGameState->GetMatchState() != EBG_MatchState::Combat)
+	{
+		BG_SHIN_LOG_INFO(TEXT("EvaluateMatchEnd skipped because MatchState is not Combat"));
+		return;
+	}
+
+	const int32 AlivePlayerCount = GetAlivePlayerCount();
+	BG_SHIN_LOG_INFO(TEXT("EvaluateMatchEnd: AlivePlayerCount = %d"), AlivePlayerCount);
+
+	if (AlivePlayerCount > 1)
+	{
+		return;
+	}
+
+	AController* WinnerController = AlivePlayerCount == 1
+		? GetLastAlivePlayerController()
+		: nullptr;
+
+	EndBattleMatch(WinnerController);
+}
+
+void ABG_BattleGameMode::EndBattleMatch(AController* WinnerController)
+{
+	ABG_GameState* BGGameState = GetGameState<ABG_GameState>();
+	if (!BGGameState)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("EndBattleMatch failed because GameState was null"));
+		return;
+	}
+
+	if (BGGameState->GetMatchState() == EBG_MatchState::Result)
+	{
+		BG_SHIN_LOG_WARN(TEXT("EndBattleMatch skipped because match is already in Result state"));
+		return;
+	}
+
+	BGGameState->SetMatchState(EBG_MatchState::Result);
+
+	BG_SHIN_LOG_INFO(TEXT("Battle match ended. WinnerController=%s"),
+		*BGLogHelper::SafeName(WinnerController));
 }

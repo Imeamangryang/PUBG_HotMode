@@ -1,4 +1,5 @@
 ﻿#include "BG_GameState.h"
+#include "GameFramework/PlayerState.h"
 #include "Net/UnrealNetwork.h"
 
 ABG_GameState::ABG_GameState()
@@ -13,6 +14,7 @@ void ABG_GameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(ABG_GameState, CurrentMatchState);
 	DOREPLIFETIME(ABG_GameState, bIsPreparationPhase);
 	DOREPLIFETIME(ABG_GameState, PreparationTimeRemaining);
+	DOREPLIFETIME(ABG_GameState, LobbyPlayerListRevision);
 }
 
 void ABG_GameState::SetMatchState(EBG_MatchState NewState)
@@ -63,6 +65,51 @@ void ABG_GameState::SetPreparationTimeRemaining(int32 NewTimeRemaining)
 	OnRep_PreparationTimeRemaining();
 }
 
+TArray<APlayerState*> ABG_GameState::GetLobbyPlayerStates() const
+{
+	TArray<APlayerState*> LobbyPlayerStates;
+
+	for (APlayerState* PlayerState : PlayerArray)
+	{
+		if (!PlayerState)
+		{
+			continue;
+		}
+
+		LobbyPlayerStates.Add(PlayerState);
+	}
+
+	return LobbyPlayerStates;
+}
+
+TArray<FString> ABG_GameState::GetLobbyPlayerNames() const
+{
+	TArray<FString> LobbyPlayerNames;
+
+	for (APlayerState* PlayerState : PlayerArray)
+	{
+		if (!PlayerState)
+		{
+			continue;
+		}
+
+		LobbyPlayerNames.Add(PlayerState->GetPlayerName());
+	}
+
+	return LobbyPlayerNames;
+}
+
+void ABG_GameState::MarkLobbyPlayerListDirty()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	++LobbyPlayerListRevision;
+	OnRep_LobbyPlayerListRevision();
+}
+
 void ABG_GameState::OnRep_CurrentMatchState()
 {
 	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] MatchState changed to: %s"),
@@ -79,4 +126,12 @@ void ABG_GameState::OnRep_PreparationTimeRemaining()
 {
 	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] PreparationTimeRemaining changed: %d"),
 		PreparationTimeRemaining);
+}
+
+void ABG_GameState::OnRep_LobbyPlayerListRevision()
+{
+	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] LobbyPlayerListRevision changed: %d"),
+		LobbyPlayerListRevision);
+
+	OnLobbyPlayerListChanged.Broadcast();
 }

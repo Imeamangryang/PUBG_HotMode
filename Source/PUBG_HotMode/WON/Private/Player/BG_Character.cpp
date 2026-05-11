@@ -30,7 +30,7 @@ DEFINE_LOG_CATEGORY(LogBGCharacter);
 
 ABG_Character::ABG_Character()
 {
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
 
 	bUseControllerRotationYaw = true;
@@ -93,6 +93,7 @@ ABG_Character::ABG_Character()
 	bIsAiming = false;
 	GetCharacterMovement()->MaxWalkSpeed = StandingWalkSpeed;
 	GetCharacterMovement()->MaxWalkSpeedCrouched = CrouchWalkSpeed;
+	RefreshMovementState();
 	UpdateDerivedState();
 }
 
@@ -154,6 +155,12 @@ void ABG_Character::BeginPlay()
 			}
 		}
 	}
+
+	RefreshMovementState();
+	if (bIsFalling)
+	{
+		StartFallingStateMonitor();
+	}
 }
 
 void ABG_Character::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
@@ -172,6 +179,8 @@ void ABG_Character::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 
 		FallingStartZ = GetActorLocation().Z;
 		bIsJumpFalling = true;
 		bIsParachuteFalling = false;
+		RefreshMovementState();
+		StartFallingStateMonitor();
 		return;
 	}
 
@@ -179,43 +188,22 @@ void ABG_Character::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 
 	{
 		HandleLandingFromAir();
 	}
+
+	StopFallingStateMonitor();
+	RefreshMovementState();
 }
 
-void ABG_Character::Tick(float DeltaSeconds)
+void ABG_Character::OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
 {
-	Super::Tick(DeltaSeconds);
-	
-	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
-	{
-		bIsFalling = MovementComponent->IsFalling();
-		bIsAcceleration = MovementComponent->GetCurrentAcceleration().Size() > 0.f;
+	Super::OnStartCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+	RefreshMovementState();
+	UpdateDerivedState();
+}
 
-		if (bIsFalling)
-		{
-			const float FallingDistance = FallingStartZ - GetActorLocation().Z;
-			const bool bReachedParachuteThreshold = FallingDistance >= ParachuteFallThreshold;
-			if (bReachedParachuteThreshold && !bIsParachuteFalling && ParachuteFallMontage)
-			{
-				if (USkeletalMeshComponent* BodyMesh = GetBodyAnimationMesh())
-				{
-					if (UAnimInstance* AnimInstance = BodyMesh->GetAnimInstance())
-					{
-						AnimInstance->Montage_Play(ParachuteFallMontage);
-					}
-				}
-			}
-
-			bIsParachuteFalling = bReachedParachuteThreshold;
-			bIsJumpFalling = !bReachedParachuteThreshold;
-		}
-	}
-	else
-	{
-		UE_LOG(LogBGCharacter, Error, TEXT("%s: Tick failed because CharacterMovement was null."), *GetNameSafe(this));
-		bIsFalling = false;
-		bIsAcceleration = false; 
-	}
-
+void ABG_Character::OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust)
+{
+	Super::OnEndCrouch(HalfHeightAdjust, ScaledHalfHeightAdjust);
+	RefreshMovementState();
 	UpdateDerivedState();
 }
 // 스탠딩/크라우치/엎드리기 상태 변경 OnRep
@@ -238,6 +226,9 @@ void ABG_Character::SetupPlayerInputComponent(UInputComponent* PlayerInputCompon
 void ABG_Character::Landed(const FHitResult& Hit)
 {
 	Super::Landed(Hit);
+
+	StopFallingStateMonitor();
+	RefreshMovementState();
 	
 	if (!bIsSkyDiving)
 	{
@@ -278,6 +269,9 @@ void ABG_Character::MoveFromInput(const FInputActionValue& Value)
 		AddMovementInput(ForwardDirection, MovementVector.Y);
 		AddMovementInput(RightDirection, MovementVector.X);
 	}
+
+	bIsAcceleration = !MovementVector.IsNearlyZero();
+	UpdateActionAvailability();
 }
 
 void ABG_Character::LookFromInput(const FInputActionValue& Value)
@@ -429,14 +423,13 @@ void ABG_Character::ToggleCrouchFromInput()
 	if (bIsCrouched)
 	{
 		UnCrouch();
-		CharacterStance = EBGCharacterStance::Standing;
 	}
 	else
 	{
 		Crouch();
-		CharacterStance = EBGCharacterStance::Crouching;
 	}
 
+	RefreshMovementState();
 	UpdateDerivedState();
 }
 
@@ -458,14 +451,7 @@ void ABG_Character::ToggleProneFromInput()
 	}
 
 	bIsProne = bNewIsProne;
-
-	// 엎드리기 상태에 따라 스탠스 갱신
-	if (bIsProne) {
-		CharacterStance = EBGCharacterStance::Prone;
-	} else {
-		CharacterStance = EBGCharacterStance::Standing;
-	}
-
+	RefreshMovementState();
 	UpdateDerivedState();
 }
 
@@ -551,8 +537,7 @@ void ABG_Character::Req_PrimaryAction()
 
 	if (GetWorld()->TimeSeconds - LastMeleeAttackTime < MeleeAttackCooldown) return;
 
-	CharacterState = EBGCharacterState::MeleeAttacking;
-	UpdateDerivedState();
+	SetCharacterStateValue(EBGCharacterState::MeleeAttacking);
 
 	if (HasAuthority()) Server_ExecuteMeleeAttack_Implementation();
 	else Server_ExecuteMeleeAttack();
@@ -571,8 +556,7 @@ void ABG_Character::Server_ExecuteMeleeAttack_Implementation()
 
 	ProcessMeleeHitDetection();
 	Multicast_PlayAttackEffects();
-	CharacterState = EBGCharacterState::Idle;
-	UpdateDerivedState();
+	SetCharacterStateValue(EBGCharacterState::Idle);
 }
 
 bool ABG_Character::Server_ExecuteMeleeAttack_Validate()
@@ -804,12 +788,7 @@ void ABG_Character::BeginAirplaneDrop(const FVector& DropLocation, const FVector
 
 void ABG_Character::OnRep_IsParachuteOpen()
 {
-	if (!ParachuteMeshComponent)
-	{
-		return;
-	}
-	
-	ParachuteMeshComponent->SetHiddenInGame(!bIsParachuteOpen);
+	UpdateParachuteVisibility();
 }
 
 void ABG_Character::Server_BeginAirplaneDrop_Implementation(const FVector& DropLocation, const FVector& DropForwardVector)
@@ -964,8 +943,7 @@ void ABG_Character::FinishTimedCharacterState(EBGCharacterState ExpectedCharacte
 		return;
 	}
 
-	CharacterState = EBGCharacterState::Idle;
-	UpdateDerivedState();
+	SetCharacterStateValue(EBGCharacterState::Idle);
 }
 
 FName ABG_Character::GetDesiredWeaponSocketName(EBG_EquipmentSlot WeaponSlot) const
@@ -1251,7 +1229,6 @@ void ABG_Character::RestoreDefaultCamera()
 	{
 		return;
 	}
-	GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Blue, FString::Printf(TEXT("%s: Restoring default camera."), *GetNameSafe(this)));
 
 	CameraBoom->TargetArmLength = DefaultCameraBoomLength;
 	CameraBoom->SocketOffset = DefaultCameraBoomSocketOffset;
@@ -1267,14 +1244,14 @@ void ABG_Character::ResetAfterSkyDiveLanding()
 		MovementComponent->FallingLateralFriction = 0.0f;
 	}
 
+	bIsSkyDiving = false;
+	ResetAirStateTracking();
+
 	if (HasAuthority())
 	{
-		bIsParachuteOpen = false;
-		OnRep_IsParachuteOpen();
 		Client_RestoreDefaultCamera();
 	}
 }
-
 
 void ABG_Character::OnRep_EquippedWeaponPoseType()
 {
@@ -1313,7 +1290,7 @@ void ABG_Character::HandleHealthDeathStateChanged(bool bNewIsDead)
 	if (bNewIsDead)
 	{
 		ClearTimedCharacterState();
-		CharacterState = EBGCharacterState::Dead;
+		SetCharacterStateValue(EBGCharacterState::Dead);
 		bIsAiming = false;
 		bIsProne = false;
 		LeanDirection = EBGLeanDirection::None;
@@ -1510,8 +1487,10 @@ void ABG_Character::Server_SetProneState_Implementation(bool bNewIsProne)
 	{
 		UnCrouch();
 	}
+	
 
 	bIsProne = bNewIsProne;
+	RefreshMovementState();
 	UpdateDerivedState();
 }
 
@@ -1547,6 +1526,89 @@ void ABG_Character::ClearTimedCharacterState()
 	UE_LOG(LogBGCharacter, Error, TEXT("%s: ClearTimedCharacterState failed because World was null."), *GetNameSafe(this));
 }
 
+void ABG_Character::RefreshMovementState()
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: RefreshMovementState failed because CharacterMovement was null."), *GetNameSafe(this));
+		bIsFalling = false;
+		bIsAcceleration = false;
+		return;
+	}
+
+	bIsFalling = MovementComponent->IsFalling();
+	bIsAcceleration = MovementComponent->GetCurrentAcceleration().SizeSquared() > KINDA_SMALL_NUMBER;
+	UpdateActionAvailability();
+}
+
+void ABG_Character::StartFallingStateMonitor()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: StartFallingStateMonitor failed because World was null."), *GetNameSafe(this));
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		FallingStateMonitorTimerHandle,
+		this,
+		&ABG_Character::EvaluateFallingState,
+		0.05f,
+		true);
+}
+
+void ABG_Character::StopFallingStateMonitor()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(FallingStateMonitorTimerHandle);
+		return;
+	}
+
+	UE_LOG(LogBGCharacter, Error, TEXT("%s: StopFallingStateMonitor failed because World was null."), *GetNameSafe(this));
+}
+
+void ABG_Character::EvaluateFallingState()
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: EvaluateFallingState failed because CharacterMovement was null."), *GetNameSafe(this));
+		StopFallingStateMonitor();
+		bIsFalling = false;
+		bIsAcceleration = false;
+		UpdateActionAvailability();
+		return;
+	}
+
+	if (!MovementComponent->IsFalling())
+	{
+		StopFallingStateMonitor();
+		RefreshMovementState();
+		return;
+	}
+
+	RefreshMovementState();
+
+	const float FallingDistance = FallingStartZ - GetActorLocation().Z;
+	const bool bReachedParachuteThreshold = FallingDistance >= ParachuteFallThreshold;
+	if (bReachedParachuteThreshold && !bIsParachuteFalling && ParachuteFallMontage)
+	{
+		if (USkeletalMeshComponent* BodyMesh = GetBodyAnimationMesh())
+		{
+			if (UAnimInstance* AnimInstance = BodyMesh->GetAnimInstance())
+			{
+				AnimInstance->Montage_Play(ParachuteFallMontage);
+			}
+		}
+	}
+
+	bIsParachuteFalling = bReachedParachuteThreshold;
+	bIsJumpFalling = !bReachedParachuteThreshold;
+}
+
 bool ABG_Character::CanStartAim() const
 {
 	return bCanAim;
@@ -1554,11 +1616,14 @@ bool ABG_Character::CanStartAim() const
 
 void ABG_Character::ResetAirStateTracking()
 {
+	StopFallingStateMonitor();
 	bIsParachuteFalling = false;
 	bIsJumpFalling = false;
 	bIsParachuteOpen = false;
 	FallingStartZ = 0.f;
-
+	
+	UpdateParachuteVisibility();
+	
 	if (UCharacterMovementComponent* MovementComponent = GetCharacterMovement())
 	{
 		MovementComponent->AirControl = 0.05f;
@@ -1584,6 +1649,15 @@ void ABG_Character::HandleLandingFromAir()
 	}
 
 	ResetAirStateTracking();
+}
+
+void ABG_Character::UpdateParachuteVisibility()
+{
+	if (!ParachuteMeshComponent)
+	{
+		return;
+	}
+	ParachuteMeshComponent->SetHiddenInGame(!bIsParachuteOpen);
 }
 
 void ABG_Character::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

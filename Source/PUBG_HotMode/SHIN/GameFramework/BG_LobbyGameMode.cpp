@@ -24,6 +24,7 @@ void ABG_LobbyGameMode::BeginPlay()
 	if (ABG_GameState* BGGameState = GetGameState<ABG_GameState>())
 	{
 		BGGameState->SetMatchState(EBG_MatchState::Lobby);
+		BGGameState->MarkLobbyPlayerListDirty();
 		BG_SHIN_LOG_INFO(TEXT("MatchState set to Lobby"));
 	}
 	else
@@ -45,6 +46,15 @@ void ABG_LobbyGameMode::PostLogin(APlayerController* NewPlayer)
 	{
 		BG_SHIN_LOG_ERROR(TEXT("PostLogin failed because NewPlayer was null"));
 		return;
+	}
+
+	if (ABG_GameState* BGGameState = GetGameState<ABG_GameState>())
+	{
+		BGGameState->MarkLobbyPlayerListDirty();
+	}
+	else
+	{
+		BG_SHIN_LOG_ERROR(TEXT("PostLogin could not mark lobby player list dirty because GameState was null"));
 	}
 
 	TArray<AActor*> FoundCameras;
@@ -71,6 +81,15 @@ void ABG_LobbyGameMode::Logout(AController* Exiting)
 	BG_SHIN_LOG_CONTROLLER(this, Exiting, "Lobby Logout");
 
 	Super::Logout(Exiting);
+
+	if (ABG_GameState* BGGameState = GetGameState<ABG_GameState>())
+	{
+		BGGameState->MarkLobbyPlayerListDirty();
+	}
+	else
+	{
+		BG_SHIN_LOG_ERROR(TEXT("Logout could not mark lobby player list dirty because GameState was null"));
+	}
 }
 
 void ABG_LobbyGameMode::RequestStartGame()

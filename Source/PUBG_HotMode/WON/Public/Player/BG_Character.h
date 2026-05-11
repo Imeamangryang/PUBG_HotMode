@@ -81,6 +81,8 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode) override;
+	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
+	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
 	virtual void Landed(const FHitResult& Hit) override;
 
 	// 공격 네트워크 로직
@@ -241,6 +243,7 @@ public:
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "State|Parachute")
 	bool bHasParachute = true; // 시작할 때 가지고 있다고 가정
+	
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_IsParachuteOpen, Category = "State|Parachute")
 	bool bIsParachuteOpen = false;
 
@@ -368,6 +371,11 @@ private:
 	void ResetAfterSkyDiveLanding();	
 	void ResetAirStateTracking();
 	void HandleLandingFromAir();
+	void UpdateParachuteVisibility();
+	void RefreshMovementState();
+	void StartFallingStateMonitor();
+	void StopFallingStateMonitor();
+	void EvaluateFallingState();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -502,6 +510,7 @@ public:
 	float FallingStartZ = 0.f;
 
 	FTimerHandle CharacterStateTimerHandle;
+	FTimerHandle FallingStateMonitorTimerHandle;
 
 	//UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Weapon")
 	//TArray<TObjectPtr<AActor>> NearbyWeapons;
@@ -512,9 +521,6 @@ public:
 	UPROPERTY(Transient)
 	FVector DefaultCameraBoomSocketOffset = FVector(0.0f, 40.0f, 60.0f);
 	
-	
-	virtual void Tick(float DeltaSeconds) override;
-
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayPickupMontage(EBG_ItemType PickedUpItemType);
 

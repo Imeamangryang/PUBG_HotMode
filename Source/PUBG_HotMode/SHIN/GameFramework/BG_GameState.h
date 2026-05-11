@@ -4,6 +4,10 @@
 #include "GameFramework/GameStateBase.h"
 #include "BG_GameState.generated.h"
 
+class APlayerState;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnLobbyPlayerListChanged);
+
 UENUM(BlueprintType)
 enum class EBG_MatchState : uint8
 {
@@ -39,6 +43,18 @@ public:
 	void SetPreparationPhase(bool bInPreparationPhase);
 	void SetPreparationTimeRemaining(int32 NewTimeRemaining);
 
+	UFUNCTION(BlueprintPure, Category = "BG|Lobby")
+	TArray<APlayerState*> GetLobbyPlayerStates() const;
+
+	UFUNCTION(BlueprintPure, Category = "BG|Lobby")
+	TArray<FString> GetLobbyPlayerNames() const;
+
+	UFUNCTION(BlueprintCallable, Category = "BG|Lobby")
+	void MarkLobbyPlayerListDirty();
+
+	UPROPERTY(BlueprintAssignable, Category = "BG|Lobby")
+	FOnLobbyPlayerListChanged OnLobbyPlayerListChanged;
+
 protected:
 	UFUNCTION()
 	void OnRep_CurrentMatchState();
@@ -49,6 +65,9 @@ protected:
 	UFUNCTION()
 	void OnRep_PreparationTimeRemaining();
 
+	UFUNCTION()
+	void OnRep_LobbyPlayerListRevision();
+
 protected:
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentMatchState, BlueprintReadOnly, Category = "BG|GameState")
 	EBG_MatchState CurrentMatchState = EBG_MatchState::Lobby;
@@ -58,4 +77,7 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_PreparationTimeRemaining, BlueprintReadOnly, Category = "BG|GameState")
 	int32 PreparationTimeRemaining = 0;
+
+	UPROPERTY(ReplicatedUsing = OnRep_LobbyPlayerListRevision, BlueprintReadOnly, Category = "BG|Lobby")
+	int32 LobbyPlayerListRevision = 0;
 };

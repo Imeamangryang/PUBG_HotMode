@@ -1,4 +1,4 @@
-# Agent Rules
+﻿# Agent Rules
 
 - **Language**: Respond in Korean by default. Write code comments in Korean if the file already has Korean comments, otherwise in English. Only add comments when the intent is non-obvious — never restate what the code already expresses.
 - **Plan before implement**: Unless explicitly asked to implement, only create a plan.

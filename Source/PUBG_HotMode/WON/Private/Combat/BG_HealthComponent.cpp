@@ -1,4 +1,4 @@
-#include "Combat/BG_HealthComponent.h"
+﻿#include "Combat/BG_HealthComponent.h"
 
 #include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"

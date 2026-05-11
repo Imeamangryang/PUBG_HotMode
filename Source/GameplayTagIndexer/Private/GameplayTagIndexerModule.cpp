@@ -1,4 +1,4 @@
-#include "GameplayTagIndexerModule.h"
+﻿#include "GameplayTagIndexerModule.h"
 
 void FGameplayTagIndexerModule::StartupModule() {}
 

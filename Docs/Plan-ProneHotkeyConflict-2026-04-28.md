@@ -1,4 +1,4 @@
-# 1/2 Hotkey Prone Trigger Fix Plan
+﻿# 1/2 Hotkey Prone Trigger Fix Plan
 
 ## Context
 - `ABG_PlayerController::BindPawnInput()` binds temporary weapon equip to `EKeys::One` and `EKeys::Two`.

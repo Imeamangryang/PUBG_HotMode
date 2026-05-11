@@ -23,6 +23,11 @@ protected:
 	void SpawnAndPossessPlayer(APlayerController* NewPlayer);
 	void StartPreparationPhase();
 	void TickPreparationPhase();
+	
+	void EvaluateMatchEnd();
+	int32 GetAlivePlayerCount() const;
+	AController* GetLastAlivePlayerController() const;
+	void EndBattleMatch(AController* WinnerController);
 
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "BG|Battle")

@@ -1,4 +1,4 @@
-#include "Combat/BG_WeaponFireComponent.h"
+ï»¿#include "Combat/BG_WeaponFireComponent.h"
 
 #include "Combat/BG_DamageSystem.h"
 #include "Combat/BG_EquippedWeaponBase.h"
@@ -21,7 +21,7 @@ UBG_WeaponFireComponent::UBG_WeaponFireComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
 
-	// ÀÓ½Ã ¹«±â ½ºÆåÀÌ´Ù. ´Ù¸¥ ÆÀ¿øÀÇ ¾ÆÀÌÅÛ/¹«±â µ¥ÀÌÅÍ°¡ µé¾î¿À¸é ÀÌ ºí·ÏÀ» ±³Ã¼ÇÏ¸é µÈ´Ù.
+	// ì„ì‹œ ë¬´ê¸° ìŠ¤í™ì´ë‹¤. ë‹¤ë¥¸ íŒ€ì›ì˜ ì•„ì´í…œ/ë¬´ê¸° ë°ì´í„°ê°€ ë“¤ì–´ì˜¤ë©´ ì´ ë¸”ë¡ì„ êµì²´í•˜ë©´ ëœë‹¤.
 	PistolFireSettings.Damage = 25.f;
 	PistolFireSettings.Range = 2500.f;
 	PistolFireSettings.FireCooldown = 0.20f;
@@ -34,7 +34,7 @@ UBG_WeaponFireComponent::UBG_WeaponFireComponent()
 	RifleFireSettings.PelletCount = 1;
 	RifleFireSettings.SpreadAngleDegrees = 0.5f;
 
-	// ¼¦°ÇÀº ¾ÆÁ÷ ¿¬µ¿ ÀüÀÌ¹Ç·Î ÀÏ´Ü ´õ¹Ì °ª¸¸ µĞ´Ù.
+	// ìƒ·ê±´ì€ ì•„ì§ ì—°ë™ ì „ì´ë¯€ë¡œ ì¼ë‹¨ ë”ë¯¸ ê°’ë§Œ ë‘”ë‹¤.
 	ShotgunFireSettings.Damage = 9.f;
 	ShotgunFireSettings.Range = 1600.f;
 	ShotgunFireSettings.FireCooldown = 0.85f;
