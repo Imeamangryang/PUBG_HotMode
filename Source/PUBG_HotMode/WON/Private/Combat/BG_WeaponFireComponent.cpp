@@ -659,10 +659,9 @@ void UBG_WeaponFireComponent::HandleAutomaticFire()
 		return;
 	}
 
-	if (!ExecuteFire())
-	{
-		StopAutomaticFire();
-	}
+	// Timer callbacks can arrive slightly earlier than FireCooldown because of timer precision,
+	// so one failed ExecuteFire should not terminate a held full-auto burst by itself.
+	ExecuteFire();
 }
 
 UBG_EquipmentComponent* UBG_WeaponFireComponent::GetEquipmentComponent(const TCHAR* OperationName) const

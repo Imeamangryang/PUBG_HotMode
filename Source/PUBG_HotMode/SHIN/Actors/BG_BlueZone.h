@@ -29,16 +29,19 @@ protected:
 public:
 	virtual void Tick(float DeltaTime) override;
 
-private:
+	UFUNCTION(BlueprintCallable, Category="Zone")
+	void SetZoneActive(bool bNewActive);
 
-	/* ===== Mesh ===== */
+	UFUNCTION(BlueprintPure, Category="Zone")
+	bool IsZoneActive() const { return bIsActive; }
+
+private:
 	UPROPERTY(VisibleAnywhere)
 	UStaticMeshComponent* ZoneMesh;
 
 	UPROPERTY()
 	UMaterialInstanceDynamic* ZoneMID;
 
-	/* ===== Zone Data ===== */
 	UPROPERTY()
 	FVector ZoneCenter;
 
@@ -57,22 +60,31 @@ private:
 	UPROPERTY(EditAnywhere, Category="Zone")
 	float MinRadius = 50.f;
 
-	/* ===== Cylinder Height ===== */
 	UPROPERTY(EditAnywhere, Category="Zone")
 	float CylinderHalfHeight = 25000.f;
 
-	/* ===== State ===== */
 	UPROPERTY()
 	EZoneState ZoneState = EZoneState::Waiting;
 
+	UPROPERTY(VisibleInstanceOnly, Category="Zone")
+	bool bIsActive = false;
+
+	UPROPERTY(EditDefaultsOnly, Category="Zone|Damage", meta=(ClampMin="0.1"))
+	float DamageTickInterval = 1.0f;
+
+	UPROPERTY(EditDefaultsOnly, Category="Zone|Damage", meta=(ClampMin="0.0"))
+	float DamagePerTick = 5.0f;
+
 	float ElapsedTime = 0.f;
 
-private:
+	FTimerHandle DamageTimerHandle;
 
+private:
 	void UpdateZone(float DeltaTime);
 	void StartShrink();
 	float GetShrinkAlpha() const;
 
 	void UpdateVisuals();
-	void CheckPlayersOutside(); // TODO
+	void CheckPlayersOutside();
+	void ApplyBlueZoneDamageTick();
 };

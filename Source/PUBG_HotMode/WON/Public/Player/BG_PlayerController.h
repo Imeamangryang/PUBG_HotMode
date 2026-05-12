@@ -74,6 +74,7 @@ public:
 	virtual void SetPawn(APawn* InPawn) override;
 	virtual void BeginPlay() override;
 	virtual void OnPossess(APawn* InPawn) override;
+	virtual void Tick(float DeltaSeconds) override;
 
 	UFUNCTION(BlueprintPure, Category = "HUD")
 	UBG_HealthViewModel* GetHUDViewModel() const { return HealthViewModel; }
@@ -135,6 +136,9 @@ public:
 	bool IsInAirplaneView() const { return AirplaneCameraRig != nullptr; }
 
 	void TryExitAirplane();
+	
+	UFUNCTION(BlueprintCallable, Category = "Battle UI")
+	void UpdateBlueZoneOverlay();
 	
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
@@ -233,4 +237,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<ABG_AirplaneCameraRig> AirplaneCameraRig = nullptr;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Battle UI", meta = (AllowPrivateAccess = "true"))
+	TSubclassOf<UUserWidget> BlueZoneOverlayWidgetClass = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UUserWidget> BlueZoneOverlayWidget = nullptr;
 };

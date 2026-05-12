@@ -28,6 +28,7 @@ class USphereComponent;
 class UPrimitiveComponent;
 class AActor;
 class UParkourComponent;
+class UCompassComponent;
 enum class EBG_EquipmentSlot : uint8;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogBGCharacter, Log, All);
@@ -84,6 +85,7 @@ protected:
 	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
 	virtual void OnEndCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
 	virtual void Landed(const FHitResult& Hit) override;
+	virtual bool CanJumpInternal_Implementation() const override;
 
 	// 공격 네트워크 로직
 	UFUNCTION(Server, Reliable, WithValidation)
@@ -125,6 +127,9 @@ public:
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetProneState(bool bNewIsProne);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetCharacterStanceState(EBGCharacterStance NewCharacterStance);
 
 	UFUNCTION(Client, Unreliable)
 	void Client_ApplyRecoil(float PitchDelta, float YawDelta, TSubclassOf<UCameraShakeBase> CameraShakeClass, float CameraShakeScale);
@@ -268,6 +273,19 @@ public:
 	
 	UFUNCTION()
 	void OnRep_IsParachuteOpen();
+	
+	UFUNCTION(BlueprintPure, Category = "BlueZone")
+	bool IsOutsideBlueZone() const { return bIsOutsideBlueZone; }
+
+	void SetIsOutsideBlueZone(bool bNewIsOutsideBlueZone);
+	
+	UFUNCTION()
+	void OnRep_IsOutsideBlueZone();
+	
+	UFUNCTION(BlueprintPure, Category = "BlueZone")
+	bool CanReceiveBlueZoneDamage() const { return bCanReceiveBlueZoneDamage; }
+
+	void SetCanReceiveBlueZoneDamage(bool bNewCanReceiveBlueZoneDamage);
 
 	// 상호작용으로 호출될 함수
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "State|Parachute")
@@ -321,6 +339,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Animation")
 	UBG_WeaponFireComponent* GetWeaponFireComponent() const { return WeaponFireComponent; }
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UCompassComponent> CompassComponent;
 
 	UFUNCTION(BlueprintPure, Category = "Animation")
 	UBG_InteractionAnimationComponent* GetInteractionAnimationComponent() const { return InteractionAnimationComponent; }
@@ -360,6 +381,7 @@ private:
 	void UpdateActionAvailability();
 	void UpdateCharacterStance();
 	void ApplyMovementSpeedForStance();
+	void ApplyCharacterStanceState(EBGCharacterStance NewCharacterStance);
 	void ClearTimedCharacterState();
 	bool CanStartAim() const;
 	void RefreshCurrentInteractableWeapon();
@@ -438,6 +460,9 @@ private:
 	
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "State|SkyDive", meta = (AllowPrivateAccess = "true"))
 	bool bIsSkyDiving = false;
+	
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "BlueZone", meta = (AllowPrivateAccess = "true"))
+	bool bCanReceiveBlueZoneDamage = false;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
 	float InteractionRangeRadius = 180.f;
@@ -520,6 +545,9 @@ public:
 
 	UPROPERTY(Transient)
 	FVector DefaultCameraBoomSocketOffset = FVector(0.0f, 40.0f, 60.0f);
+	
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_IsOutsideBlueZone, Category = "BlueZone", meta = (AllowPrivateAccess = "true"))
+	bool bIsOutsideBlueZone = false;
 	
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayPickupMontage(EBG_ItemType PickedUpItemType);

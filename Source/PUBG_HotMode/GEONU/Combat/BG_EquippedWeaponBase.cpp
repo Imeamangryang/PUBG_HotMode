@@ -2,6 +2,7 @@
 
 #include "Combat/BG_EquippedWeaponBase.h"
 
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Net/UnrealNetwork.h"
@@ -65,6 +66,30 @@ bool ResolveEquippedMeshSocketTransform(
 	OutSocketTransform = EquippedMeshComponent->GetSocketTransform(SocketName);
 	return true;
 }
+
+void DisableEquippedWeaponCollision(AActor* WeaponActor)
+{
+	if (!IsValid(WeaponActor))
+	{
+		return;
+	}
+
+	WeaponActor->SetActorEnableCollision(false);
+
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	WeaponActor->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!PrimitiveComponent)
+		{
+			continue;
+		}
+
+		PrimitiveComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		PrimitiveComponent->SetGenerateOverlapEvents(false);
+	}
+}
 }
 
 bool ABG_EquippedWeaponBase::InitializeEquippedWeapon(ABG_Character* NewOwningCharacter)
@@ -88,6 +113,7 @@ bool ABG_EquippedWeaponBase::SetOwningCharacter(ABG_Character* NewOwningCharacte
 	OwningCharacter = NewOwningCharacter;
 	SetOwner(NewOwningCharacter);
 	SetInstigator(NewOwningCharacter);
+	DisableEquippedWeaponCollision(this);
 
 	OnOwningCharacterChanged(NewOwningCharacter);
 	return true;

@@ -7,6 +7,7 @@
 #include "BG_ItemDataRow.h"
 #include "BG_WorldItemBase.h"
 #include "Combat/BG_EquippedWeaponBase.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
@@ -1382,6 +1383,25 @@ bool UBG_EquipmentComponent::AttachEquippedWeaponActor(
 	}
 
 	WeaponActor->SetActorRelativeTransform(AttachTransform);
+	WeaponActor->SetActorEnableCollision(false);
+
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	WeaponActor->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!PrimitiveComponent)
+		{
+			LOGE(TEXT("%s: AttachEquippedWeaponActor found a null PrimitiveComponent on %s for slot %s."),
+				*GetNameSafe(this),
+				*GetNameSafe(WeaponActor),
+				*GetEquipmentSlotName(WeaponSlot));
+			continue;
+		}
+
+		PrimitiveComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		PrimitiveComponent->SetGenerateOverlapEvents(false);
+	}
+
 	return true;
 }
 

@@ -3,6 +3,7 @@
 #include "Player/BG_PlayerController.h"
 #include "Player/BG_Character.h"
 #include "Actors/BG_Airplane.h"
+#include "Actors/BG_BlueZone.h"
 #include "Utils/BG_LogHelper.h"
 #include "Kismet/GameplayStatics.h"
 
@@ -42,19 +43,15 @@ void ABG_BattleGameMode::BeginPlay()
 	if (FoundAirplanes.Num() > 0)
 	{
 		PreparedAirplane = Cast<ABG_Airplane>(FoundAirplanes[0]);
-
-		if (PreparedAirplane)
-		{
-			BG_SHIN_LOG_INFO(TEXT("PreparedAirplane found in level: %s"), *PreparedAirplane->GetName());
-		}
-		else
-		{
-			BG_SHIN_LOG_ERROR(TEXT("Found airplane actor could not be cast to ABG_Airplane"));
-		}
 	}
-	else
+
+	
+	TArray<AActor*> FoundBlueZones;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ABG_BlueZone::StaticClass(), FoundBlueZones);
+
+	if (FoundBlueZones.Num() > 0)
 	{
-		BG_SHIN_LOG_ERROR(TEXT("No ABG_Airplane actors found in level"));
+		BlueZoneActor = Cast<ABG_BlueZone>(FoundBlueZones[0]);
 	}
 }
 
@@ -205,6 +202,11 @@ void ABG_BattleGameMode::TickPreparationPhase()
 		BGGameState->SetPreparationPhase(false);
 		BGGameState->SetPreparationTimeRemaining(0);
 		BGGameState->SetMatchState(EBG_MatchState::Combat);
+
+		if (BlueZoneActor)
+		{
+			BlueZoneActor->SetZoneActive(true);
+		}
 
 		if (UWorld* World = GetWorld())
 		{
@@ -361,6 +363,11 @@ void ABG_BattleGameMode::EndBattleMatch(AController* WinnerController)
 	{
 		BG_SHIN_LOG_WARN(TEXT("EndBattleMatch skipped because match is already in Result state"));
 		return;
+	}
+	
+	if (BlueZoneActor)
+	{
+		BlueZoneActor->SetZoneActive(false);
 	}
 
 	if (ABG_PlayerController* WinnerPlayerController = Cast<ABG_PlayerController>(WinnerController))

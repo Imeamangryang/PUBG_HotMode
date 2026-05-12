@@ -106,6 +106,12 @@ void ABG_PlayerController::OnPossess(APawn* InPawn)
 	RefreshViewModelBinding();
 }
 
+void ABG_PlayerController::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	UpdateBlueZoneOverlay();
+}
+
 void ABG_PlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
@@ -502,6 +508,10 @@ void ABG_PlayerController::OnEquipPistolInputStarted()
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
 		// 임시 장착 입력이다. 나중에 인벤토리/아이템 연동이 들어오면 여기만 교체하면 된다.
+		if (!BGCharacter->HasAuthority())
+		{
+			BGCharacter->Server_SetWeaponState(EBGWeaponPoseType::Pistol, true);
+		}
 		BGCharacter->SetWeaponState(EBGWeaponPoseType::Pistol, true);
 		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip switched to Pistol."), *GetNameSafe(this));
 		return;
@@ -515,6 +525,10 @@ void ABG_PlayerController::OnEquipRifleInputStarted()
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
 		// 임시 장착 입력이다. 나중에 인벤토리/아이템 연동이 들어오면 여기만 교체하면 된다.
+		if (!BGCharacter->HasAuthority())
+		{
+			BGCharacter->Server_SetWeaponState(EBGWeaponPoseType::Rifle, true);
+		}
 		BGCharacter->SetWeaponState(EBGWeaponPoseType::Rifle, true);
 		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip switched to Rifle."), *GetNameSafe(this));
 		return;
@@ -528,6 +542,10 @@ void ABG_PlayerController::OnUnequipWeaponInputStarted()
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
 		// 임시 해제 입력이다. 최종 인벤토리 시스템이 오면 장착 상태는 그쪽이 관리한다.
+		if (!BGCharacter->HasAuthority())
+		{
+			BGCharacter->Server_SetWeaponState(EBGWeaponPoseType::None, false);
+		}
 		BGCharacter->SetEquippedWeapon(nullptr);
 		BGCharacter->SetWeaponState(EBGWeaponPoseType::None, false);
 		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip cleared."), *GetNameSafe(this));
@@ -781,6 +799,16 @@ void ABG_PlayerController::ShowBattleWaitingTimeUI()
 		BattleWaitingTimeWidget = nullptr;
 		return;
 	}
+	
+	if (IsLocalController() && BlueZoneOverlayWidgetClass)
+	{
+		BlueZoneOverlayWidget = CreateWidget<UUserWidget>(this, BlueZoneOverlayWidgetClass);
+		if (BlueZoneOverlayWidget)
+		{
+			BlueZoneOverlayWidget->AddToPlayerScreen(300);
+			BlueZoneOverlayWidget->SetVisibility(ESlateVisibility::Hidden);
+		}
+	}
 
 	BG_SHIN_LOG_INFO(TEXT("BattleWaitingTime widget added to player screen"));
 }
@@ -1018,4 +1046,34 @@ void ABG_PlayerController::Client_ShowChickenUI_Implementation()
 void ABG_PlayerController::Client_ShowEndUI_Implementation()
 {
 	ShowEndUI();
+}
+
+void ABG_PlayerController::UpdateBlueZoneOverlay()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!BlueZoneOverlayWidget)
+	{
+		return;
+	}
+
+	ABG_Character* BGCharacter = GetBGCharacter();
+	if (!BGCharacter)
+	{
+		BlueZoneOverlayWidget->SetVisibility(ESlateVisibility::Hidden);
+		return;
+	}
+
+	const bool bShouldShowBlueZoneOverlay =
+		!IsInAirplaneView() &&
+		BGCharacter->IsOutsideBlueZone();
+
+	BlueZoneOverlayWidget->SetVisibility(
+		bShouldShowBlueZoneOverlay
+			? ESlateVisibility::Visible
+			: ESlateVisibility::Hidden
+	);
 }

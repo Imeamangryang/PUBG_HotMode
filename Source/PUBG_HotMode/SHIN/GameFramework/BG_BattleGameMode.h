@@ -37,4 +37,7 @@ protected:
 	TObjectPtr<class ABG_Airplane> PreparedAirplane = nullptr;
 
 	FTimerHandle PreparationTimerHandle;
+	
+	UPROPERTY(Transient)
+	TObjectPtr<class ABG_BlueZone> BlueZoneActor = nullptr;
 };

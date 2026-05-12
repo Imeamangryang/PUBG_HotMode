@@ -25,6 +25,7 @@
 #include "Net/UnrealNetwork.h"
 #include "Character/Components/ParkourComponent.h"
 #include "TimerManager.h"
+#include "UI/Components/CompassComponent.h"
 
 DEFINE_LOG_CATEGORY(LogBGCharacter);
 
@@ -87,6 +88,8 @@ ABG_Character::ABG_Character()
 	ParachuteMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ParachuteMeshComponent->SetGenerateOverlapEvents(false);
 	ParachuteMeshComponent->SetHiddenInGame(true);
+	
+	CompassComponent = CreateDefaultSubobject<UCompassComponent>(TEXT("CompassComponent"));
 
 	bIsWeaponEquipped = false;
 	EquippedWeaponPoseType = EBGWeaponPoseType::None;
@@ -161,6 +164,9 @@ void ABG_Character::BeginPlay()
 	{
 		StartFallingStateMonitor();
 	}
+	
+	SetCanReceiveBlueZoneDamage(false);
+	SetIsOutsideBlueZone(false);
 }
 
 void ABG_Character::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode)
@@ -238,6 +244,12 @@ void ABG_Character::Landed(const FHitResult& Hit)
 	ResetAfterSkyDiveLanding();
 }
 
+bool ABG_Character::CanJumpInternal_Implementation() const
+{
+	const bool bCanJump = Super::CanJumpInternal_Implementation();
+	return bCanJump && !bIsProne && !bIsDead;
+}
+
 void ABG_Character::MoveFromInput(const FInputActionValue& Value)
 {
 	if (bIsDead)
@@ -298,12 +310,19 @@ void ABG_Character::StartJumpFromInput()
 		return;
 	}
 
+	if (bIsProne)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: StartJumpFromInput failed because character is prone."), *GetNameSafe(this));
+		return;
+	}
+
 	if (ParkourComponent)
 	{
-		ParkourComponent -> TryParkour();
+		ParkourComponent->TryParkour();
 	}
 	else
 	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: StartJumpFromInput failed because ParkourComponent was null."), *GetNameSafe(this));
 		return;
 	}
 }
@@ -410,16 +429,25 @@ void ABG_Character::StopAimFromInput()
 
 void ABG_Character::ToggleCrouchFromInput()
 {
-	if (bIsDead || !bCanEnterCrouch) return;
-
-	// 1. 엎드려 있었다면 엎드리기 해제
-	if (bIsProne) 
+	if (bIsDead || !bCanEnterCrouch)
 	{
-		bIsProne = false;
-		// 엎드린 상태에서 Crouch 입력 시 바로 앉은 상태로 전환
+		return;
 	}
 
-	// 2. 언리얼 기본 Crouch 상태 토글
+	// 일반 크라우치는 언리얼 기본 Crouch 복제/예측 흐름을 그대로 사용한다.
+	// Prone -> Crouch 전환에서만 서버 권한으로 stance를 정리해 서버/클라 불일치를 막는다.
+	if (bIsProne)
+	{
+		if (!HasAuthority())
+		{
+			Server_SetCharacterStanceState(EBGCharacterStance::Crouching);
+			return;
+		}
+
+		ApplyCharacterStanceState(EBGCharacterStance::Crouching);
+		return;
+	}
+
 	if (bIsCrouched)
 	{
 		UnCrouch();
@@ -435,7 +463,10 @@ void ABG_Character::ToggleCrouchFromInput()
 
 void ABG_Character::ToggleProneFromInput()
 {
-	if (bIsDead || !bCanEnterProne) return;
+	if (bIsDead || !bCanEnterProne)
+	{
+		return;
+	}
 
 	// 클라이언트에서만 호출되면 서버가 상태를 가지지 못하므로 서버로 전달
 	const bool bNewIsProne = !bIsProne;
@@ -749,6 +780,7 @@ void ABG_Character::BeginAirplaneDrop(const FVector& DropLocation, const FVector
 	LaunchCharacter(DropForwardVector.GetSafeNormal() * 600.0f + FVector(0.0f, 0.0f, -200.0f), true, true);
 	ApplySkyDiveCamera();
 	UpdateDerivedState();
+	SetCanReceiveBlueZoneDamage(true);
 	
 	if (HasAuthority() && GetWorld())
 	{
@@ -821,11 +853,6 @@ void ABG_Character::SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNe
 		}
 	}
 
-	if (!HasAuthority())
-	{
-		Server_SetWeaponState(NewWeaponPoseType, bNewWeaponEquipped);
-	}
-
 	EquippedWeaponPoseType = NewWeaponPoseType;
 	bIsWeaponEquipped = bNewEffectiveWeaponEquipped;
 
@@ -846,7 +873,6 @@ void ABG_Character::SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNe
 
 	UpdateDerivedState();
 	ApplyWeaponMovementState();
-	OnRep_EquippedWeaponPoseType();
 }
 
 void ABG_Character::Server_SetWeaponState_Implementation(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped)
@@ -1463,6 +1489,43 @@ void ABG_Character::UpdateCharacterStance()
 	CharacterStance = EBGCharacterStance::Standing;
 }
 
+void ABG_Character::ApplyCharacterStanceState(EBGCharacterStance NewCharacterStance)
+{
+	switch (NewCharacterStance)
+	{
+	case EBGCharacterStance::Standing:
+		if (bIsCrouched)
+		{
+			UnCrouch();
+		}
+		bIsProne = false;
+		break;
+
+	case EBGCharacterStance::Crouching:
+		bIsProne = false;
+		if (!bIsCrouched)
+		{
+			Crouch();
+		}
+		break;
+
+	case EBGCharacterStance::Prone:
+		if (bIsCrouched)
+		{
+			UnCrouch();
+		}
+		bIsProne = true;
+		break;
+
+	default:
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: ApplyCharacterStanceState failed because stance %s was invalid."), *GetNameSafe(this), *UEnum::GetValueAsString(NewCharacterStance));
+		return;
+	}
+
+	RefreshMovementState();
+	UpdateDerivedState();
+}
+
 void ABG_Character::ApplyMovementSpeedForStance()
 {
 	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
@@ -1483,20 +1546,39 @@ void ABG_Character::Server_SetProneState_Implementation(bool bNewIsProne)
 		return;
 	}
 
-	if (bIsCrouched)
-	{
-		UnCrouch();
-	}
-	
-
-	bIsProne = bNewIsProne;
-	RefreshMovementState();
-	UpdateDerivedState();
+	ApplyCharacterStanceState(bNewIsProne ? EBGCharacterStance::Prone : EBGCharacterStance::Standing);
 }
 
 bool ABG_Character::Server_SetProneState_Validate(bool bNewIsProne)
 {
 	return true;
+}
+
+void ABG_Character::Server_SetCharacterStanceState_Implementation(EBGCharacterStance NewCharacterStance)
+{
+	if (bIsDead)
+	{
+		return;
+	}
+
+	if (NewCharacterStance == EBGCharacterStance::Prone && !bCanEnterProne)
+	{
+		return;
+	}
+
+	if (NewCharacterStance == EBGCharacterStance::Crouching && !bCanEnterCrouch)
+	{
+		return;
+	}
+
+	ApplyCharacterStanceState(NewCharacterStance);
+}
+
+bool ABG_Character::Server_SetCharacterStanceState_Validate(EBGCharacterStance NewCharacterStance)
+{
+	return NewCharacterStance == EBGCharacterStance::Standing
+		|| NewCharacterStance == EBGCharacterStance::Crouching
+		|| NewCharacterStance == EBGCharacterStance::Prone;
 }
 
 void ABG_Character::Client_ApplyRecoil_Implementation(float PitchDelta, float YawDelta, TSubclassOf<UCameraShakeBase> CameraShakeClass, float CameraShakeScale)
@@ -1660,6 +1742,29 @@ void ABG_Character::UpdateParachuteVisibility()
 	ParachuteMeshComponent->SetHiddenInGame(!bIsParachuteOpen);
 }
 
+void ABG_Character::SetCanReceiveBlueZoneDamage(bool bNewCanReceiveBlueZoneDamage)
+{
+	bCanReceiveBlueZoneDamage = bNewCanReceiveBlueZoneDamage;
+}
+
+void ABG_Character::SetIsOutsideBlueZone(bool bNewIsOutsideBlueZone)
+{
+	if (bIsOutsideBlueZone == bNewIsOutsideBlueZone)
+	{
+		return;
+	}
+
+	bIsOutsideBlueZone = bNewIsOutsideBlueZone;
+	OnRep_IsOutsideBlueZone();
+}
+
+void ABG_Character::OnRep_IsOutsideBlueZone()
+{
+	UE_LOG(LogBGCharacter, Log, TEXT("%s: BlueZone outside state changed to %s"),
+		*GetNameSafe(this),
+		bIsOutsideBlueZone ? TEXT("true") : TEXT("false"));
+}
+
 void ABG_Character::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -1682,4 +1787,5 @@ void ABG_Character::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(ABG_Character, bCanUseMeleeAttack);
 	DOREPLIFETIME(ABG_Character, bIsDead);
 	DOREPLIFETIME(ABG_Character, bIsParachuteOpen);
+	DOREPLIFETIME(ABG_Character, bIsOutsideBlueZone);
 }

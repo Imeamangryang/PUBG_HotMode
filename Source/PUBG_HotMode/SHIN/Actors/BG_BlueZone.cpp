@@ -3,8 +3,10 @@
 #include "GameFramework/Character.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Player/BG_Character.h"
+#include "Combat/BG_HealthComponent.h"
+#include "Utils/BG_LogHelper.h"
 
-// Constructor
 ABG_BlueZone::ABG_BlueZone()
 {
 	PrimaryActorTick.bCanEverTick = true;
@@ -15,7 +17,6 @@ ABG_BlueZone::ABG_BlueZone()
 	ZoneMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ZoneMesh->SetCastShadow(false);
 
-	// 기본 Cylinder Mesh 지정 (엔진 기본 메시 사용)
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(TEXT("/Engine/BasicShapes/Cylinder"));
 	if (CylinderMesh.Succeeded())
 	{
@@ -23,7 +24,6 @@ ABG_BlueZone::ABG_BlueZone()
 	}
 }
 
-// BeginPlay
 void ABG_BlueZone::BeginPlay()
 {
 	Super::BeginPlay();
@@ -63,14 +63,18 @@ void ABG_BlueZone::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 }
 #endif
 
-// Tick
 void ABG_BlueZone::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	UpdateZone(DeltaTime);
 	UpdateVisuals();
-	CheckPlayersOutside();
+
+	if (!bIsActive)
+	{
+		return;
+	}
+
+	UpdateZone(DeltaTime);
 }
 
 // Zone Update
@@ -147,5 +151,83 @@ void ABG_BlueZone::CheckPlayersOutside()
 		{
 			// TODO: 블루존 데미지 처리
 		}
+	}
+}
+
+void ABG_BlueZone::SetZoneActive(bool bNewActive)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (bIsActive == bNewActive)
+	{
+		return;
+	}
+
+	bIsActive = bNewActive;
+
+	if (bIsActive)
+	{
+		ElapsedTime = 0.f;
+		ZoneState = EZoneState::Waiting;
+
+		GetWorldTimerManager().SetTimer(
+			DamageTimerHandle,
+			this,
+			&ABG_BlueZone::ApplyBlueZoneDamageTick,
+			DamageTickInterval,
+			true
+		);
+	}
+	else
+	{
+		GetWorldTimerManager().ClearTimer(DamageTimerHandle);
+	}
+}
+
+void ABG_BlueZone::ApplyBlueZoneDamageTick()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	TArray<AActor*> Players;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ABG_Character::StaticClass(), Players);
+
+	for (AActor* Actor : Players)
+	{
+		ABG_Character* Character = Cast<ABG_Character>(Actor);
+		if (!Character)
+		{
+			continue;
+		}
+
+		if (Character->GetCharacterState() == EBGCharacterState::Dead)
+		{
+			Character->SetIsOutsideBlueZone(false);
+			continue;
+		}
+
+		const float Dist = FVector::Dist2D(Character->GetActorLocation(), ZoneCenter);
+		const bool bIsOutsideBlueZone = Dist > CurrentRadius;
+
+		Character->SetIsOutsideBlueZone(bIsOutsideBlueZone);
+
+		if (!Character->CanReceiveBlueZoneDamage())
+		{
+			continue;
+		}
+
+		if (!bIsOutsideBlueZone)
+		{
+			continue;
+		}
+
+		UBG_HealthComponent* HealthComponent = Character->GetHealthComponent();
+
+		HealthComponent->ApplyDamage(DamagePerTick);
 	}
 }
