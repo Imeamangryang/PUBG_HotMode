@@ -167,3 +167,9 @@ void UBG_GameInstance::ConnectToDedicatedServer()
 		HideLoadingScreen();
 	}
 }
+
+void UBG_GameInstance::SetPendingPlayerNickName(const FString& InNickName)
+{
+	PendingPlayerNickName = InNickName;
+	BG_SHIN_LOG_INFO(TEXT("PendingPlayerNickName set to %s"), *PendingPlayerNickName);
+}

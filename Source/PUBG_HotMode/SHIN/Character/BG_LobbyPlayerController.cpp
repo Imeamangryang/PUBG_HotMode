@@ -2,6 +2,8 @@
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/BG_LobbyGameMode.h"
 #include "GameFramework/BG_GameInstance.h"
+#include "GameFramework/BG_GameState.h"
+#include "Player/BG_PlayerState.h"
 #include "Utils/BG_LogHelper.h"
 
 ABG_LobbyPlayerController::ABG_LobbyPlayerController()
@@ -22,12 +24,73 @@ void ABG_LobbyPlayerController::BeginPlay()
 
 	if (IsLocalController())
 	{
-		ShowLobbyUI();
+		if (IsLobbyMap())
+		{
+			ShowLobbyUI();
 
-		FInputModeUIOnly InputMode;
-		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-		SetInputMode(InputMode);
+			FInputModeUIOnly InputMode;
+			InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			SetInputMode(InputMode);
+		}
+		else
+		{
+			BG_SHIN_LOG_INFO(TEXT("BeginPlay skipped ShowLobbyUI because current map is not LobbyMap"));
+		}
 	}
+
+	TrySendPendingNickNameToServer();
+}
+
+void ABG_LobbyPlayerController::OnRep_PlayerState()
+{
+	Super::OnRep_PlayerState();
+
+	BG_SHIN_LOG_INFO(TEXT("OnRep_PlayerState called"));
+	TrySendPendingNickNameToServer();
+}
+
+bool ABG_LobbyPlayerController::IsLobbyMap() const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const FString MapName = World->GetMapName();
+
+	return MapName.Contains(TEXT("Safe_House")) || MapName.Contains(TEXT("Lobby"));
+}
+
+bool ABG_LobbyPlayerController::CanSendNickNameToServer() const
+{
+	if (!IsLocalController())
+	{
+		return false;
+	}
+
+	if (bNickNameSentToServer)
+	{
+		return false;
+	}
+
+	if (!PlayerState)
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	if (World->GetNetMode() == NM_Standalone)
+	{
+		return false;
+	}
+
+	return true;
 }
 
 void ABG_LobbyPlayerController::ShowLobbyUI()
@@ -113,4 +176,54 @@ void ABG_LobbyPlayerController::Client_ShowLoadingScreen_Implementation()
 	{
 		BG_SHIN_LOG_ERROR(TEXT("GetGameInstance<UBG_GameInstance>() returned null"));
 	}
+}
+
+void ABG_LobbyPlayerController::TrySendPendingNickNameToServer()
+{
+	if (!CanSendNickNameToServer())
+	{
+		BG_SHIN_LOG_INFO(TEXT("TrySendPendingNickNameToServer skipped because conditions were not met"));
+		return;
+	}
+
+	UBG_GameInstance* BGGameInstance = Cast<UBG_GameInstance>(GetGameInstance());
+	if (!BGGameInstance)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("TrySendPendingNickNameToServer failed because GameInstance was not UBG_GameInstance"));
+		return;
+	}
+
+	const FString PendingNickName = BGGameInstance->GetPendingPlayerNickName();
+	if (PendingNickName.IsEmpty())
+	{
+		BG_SHIN_LOG_WARN(TEXT("TrySendPendingNickNameToServer skipped because PendingPlayerNickName was empty"));
+		return;
+	}
+
+	BG_SHIN_LOG_INFO(TEXT("Sending PendingPlayerNickName to server: %s"), *PendingNickName);
+
+	ServerSetPlayerNickName(PendingNickName);
+	bNickNameSentToServer = true;
+}
+
+void ABG_LobbyPlayerController::ServerSetPlayerNickName_Implementation(const FString& InNickName)
+{
+	ABG_PlayerState* BGPlayerState = GetPlayerState<ABG_PlayerState>();
+	if (!BGPlayerState)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("ServerSetPlayerNickName failed because PlayerState was null"));
+		return;
+	}
+
+	BGPlayerState->SetPlayerName(InNickName);
+	BG_SHIN_LOG_INFO(TEXT("PlayerName set to %s"), *InNickName);
+
+	ABG_GameState* BGGameState = GetWorld() ? GetWorld()->GetGameState<ABG_GameState>() : nullptr;
+	if (!BGGameState)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("ServerSetPlayerNickName failed because GameState was null"));
+		return;
+	}
+
+	BGGameState->MarkLobbyPlayerListDirty();
 }

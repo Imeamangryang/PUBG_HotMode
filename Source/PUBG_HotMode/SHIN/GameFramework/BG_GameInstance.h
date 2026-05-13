@@ -21,6 +21,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "BG|Loading")
 	void StopLoadingScreen();
+	
+	UFUNCTION(BlueprintCallable, Category = "BG|Player")
+	void SetPendingPlayerNickName(const FString& InNickName);
+
+	UFUNCTION(BlueprintPure, Category = "BG|Player")
+	FString GetPendingPlayerNickName() const { return PendingPlayerNickName; }
 
 protected:
 	void HandlePreLoadMap(const FString& MapName);
@@ -40,4 +46,7 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "BG|Network")
 	FString DefaultServerAddress = TEXT("127.0.0.1:7777");
+	
+	UPROPERTY(Transient)
+	FString PendingPlayerNickName;
 };

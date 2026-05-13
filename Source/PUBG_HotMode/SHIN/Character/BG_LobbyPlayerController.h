@@ -14,6 +14,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void OnRep_PlayerState() override;
 
 public:
 	UFUNCTION(BlueprintCallable, Category = "BG|Lobby")
@@ -27,11 +28,21 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "BG|Lobby")
 	void ShowLobbyUI();
+	
+	UFUNCTION(Server, Reliable)
+	void ServerSetPlayerNickName(const FString& InNickName);
 
 protected:
+	
+	void TrySendPendingNickNameToServer();
+	bool IsLobbyMap() const;
+	bool CanSendNickNameToServer() const;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BG|LobbyUI")
 	TSubclassOf<class UUserWidget> LobbyWidgetClass;
 
 	UPROPERTY()
 	class UUserWidget* LobbyWidgetInstance;
+	
+	bool bNickNameSentToServer = false;
 };
