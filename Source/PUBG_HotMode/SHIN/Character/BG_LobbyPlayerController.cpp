@@ -128,7 +128,7 @@ void ABG_LobbyPlayerController::ShowLobbyUI()
 void ABG_LobbyPlayerController::RequestStartGame()
 {
 	BG_SHIN_LOG_EVENT_BLOCK(this, "Client RequestStartGame",
-		TEXT("Sending Server_RequestStartGame RPC"));
+		TEXT("Sending ready request to server"));
 
 	Server_RequestStartGame();
 }
@@ -136,24 +136,47 @@ void ABG_LobbyPlayerController::RequestStartGame()
 void ABG_LobbyPlayerController::Server_RequestStartGame_Implementation()
 {
 	BG_SHIN_LOG_EVENT_BLOCK(this, "Server_RequestStartGame",
-		TEXT("RPC arrived on server"));
+		TEXT("Ready toggle request arrived on server"));
 
 	UWorld* World = GetWorld();
 	if (!World)
 	{
-		BG_SHIN_LOG_ERROR(TEXT("GetWorld() returned null"));
+		BG_SHIN_LOG_ERROR(TEXT("Server_RequestStartGame failed because World was null"));
 		return;
 	}
 
-	if (ABG_LobbyGameMode* GM = World->GetAuthGameMode<ABG_LobbyGameMode>())
+	ABG_LobbyGameMode* GM = World->GetAuthGameMode<ABG_LobbyGameMode>();
+	if (!GM)
 	{
-		BG_SHIN_LOG_INFO(TEXT("NotifyStartRequested will be called on %s"), *GM->GetName());
-		GM->NotifyStartRequested();
+		BG_SHIN_LOG_ERROR(TEXT("GetAuthGameMode<ABG_LobbyGameMode>() returned null"));
+		return;
+	}
+
+	ABG_PlayerState* BGPlayerState = GetPlayerState<ABG_PlayerState>();
+	if (!BGPlayerState)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("Server_RequestStartGame failed because PlayerState was null"));
+		return;
+	}
+
+	const bool bNewReadyState = !BGPlayerState->IsReadyToStart();
+	BGPlayerState->SetReadyToStart(bNewReadyState);
+
+	BG_SHIN_LOG_INFO(TEXT("Player %s Ready state changed to %s"),
+		*GetNameSafe(BGPlayerState),
+		bNewReadyState ? TEXT("true") : TEXT("false"));
+
+	if (ABG_GameState* BGGameState = World->GetGameState<ABG_GameState>())
+	{
+		BGGameState->MarkLobbyPlayerListDirty();
 	}
 	else
 	{
-		BG_SHIN_LOG_ERROR(TEXT("GetAuthGameMode<ABG_LobbyGameMode>() returned null"));
+		BG_SHIN_LOG_ERROR(TEXT("Server_RequestStartGame failed because GameState was null"));
 	}
+
+	BG_SHIN_LOG_INFO(TEXT("NotifyStartRequested will be called on %s"), *GM->GetName());
+	GM->NotifyStartRequested();
 }
 
 void ABG_LobbyPlayerController::Client_ShowLoadingScreen_Implementation()

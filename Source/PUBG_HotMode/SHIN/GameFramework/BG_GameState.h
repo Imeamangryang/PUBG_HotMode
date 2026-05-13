@@ -33,7 +33,7 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "BG|GameState")
 	EBG_MatchState GetMatchState() const { return CurrentMatchState; }
-	
+
 	UFUNCTION(BlueprintPure, Category = "BG|GameState")
 	bool IsPreparationPhase() const { return bIsPreparationPhase; }
 
@@ -48,6 +48,12 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "BG|Lobby")
 	void MarkLobbyPlayerListDirty();
+	
+	UFUNCTION(BlueprintPure, Category = "BG|Lobby")
+	int32 GetLobbyReadyPlayerCount() const;
+
+	UFUNCTION(BlueprintPure, Category = "BG|Lobby")
+	int32 GetLobbyTotalPlayerCount() const;
 
 	UPROPERTY(BlueprintAssignable, Category = "BG|Lobby")
 	FOnLobbyPlayerListChanged OnLobbyPlayerListChanged;
@@ -55,7 +61,7 @@ public:
 protected:
 	UFUNCTION()
 	void OnRep_CurrentMatchState();
-	
+
 	UFUNCTION()
 	void OnRep_PreparationPhase();
 
@@ -68,7 +74,7 @@ protected:
 protected:
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentMatchState, BlueprintReadOnly, Category = "BG|GameState")
 	EBG_MatchState CurrentMatchState = EBG_MatchState::Lobby;
-	
+
 	UPROPERTY(ReplicatedUsing = OnRep_PreparationPhase, BlueprintReadOnly, Category = "BG|GameState")
 	bool bIsPreparationPhase = false;
 

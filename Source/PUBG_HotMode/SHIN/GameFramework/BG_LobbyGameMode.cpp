@@ -1,6 +1,7 @@
 ﻿#include "BG_LobbyGameMode.h"
 #include "BG_GameState.h"
 #include "Character/BG_LobbyPlayerController.h"
+#include "Player/BG_PlayerState.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Utils/BG_LogHelper.h"
@@ -134,18 +135,65 @@ void ABG_LobbyGameMode::NotifyStartRequested()
 		return;
 	}
 
-	BG_SHIN_LOG_EVENT_BLOCK(this, "LobbyGameMode NotifyStartRequested",
-		TEXT("Broadcasting loading screen and scheduling DoServerTravel timer"));
-
-	bStartRequested = true;
-
 	UWorld* World = GetWorld();
 	if (!World)
 	{
 		BG_SHIN_LOG_ERROR(TEXT("NotifyStartRequested failed because World was null"));
-		bStartRequested = false;
 		return;
 	}
+
+	BG_SHIN_LOG_EVENT_BLOCK(this, "LobbyGameMode NotifyStartRequested",
+		TEXT("Checking whether all players are ready"));
+
+	int32 TotalPlayerCount = 0;
+	int32 ReadyPlayerCount = 0;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!IsValid(PC))
+		{
+			BG_SHIN_LOG_WARN(TEXT("NotifyStartRequested found invalid PlayerController"));
+			continue;
+		}
+
+		ABG_PlayerState* BGPlayerState = PC->GetPlayerState<ABG_PlayerState>();
+		if (!BGPlayerState)
+		{
+			BG_SHIN_LOG_WARN(TEXT("NotifyStartRequested skipped because PlayerState was null for controller %s"), *GetNameSafe(PC));
+			return;
+		}
+
+		++TotalPlayerCount;
+
+		if (BGPlayerState->IsReadyToStart())
+		{
+			++ReadyPlayerCount;
+		}
+		else
+		{
+			BG_SHIN_LOG_INFO(TEXT("Player not ready yet: %s"), *GetNameSafe(BGPlayerState));
+		}
+	}
+
+	BG_SHIN_LOG_INFO(TEXT("ReadyPlayerCount = %d / %d"), ReadyPlayerCount, TotalPlayerCount);
+
+	if (TotalPlayerCount <= 0)
+	{
+		BG_SHIN_LOG_WARN(TEXT("NotifyStartRequested skipped because there were no players"));
+		return;
+	}
+
+	if (ReadyPlayerCount != TotalPlayerCount)
+	{
+		BG_SHIN_LOG_INFO(TEXT("Not all players are ready yet. Start canceled for now."));
+		return;
+	}
+
+	BG_SHIN_LOG_EVENT_BLOCK(this, "LobbyGameMode All Players Ready",
+		TEXT("Broadcasting loading screen and scheduling DoServerTravel timer"));
+
+	bStartRequested = true;
 
 	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
 	{
@@ -161,7 +209,6 @@ void ABG_LobbyGameMode::NotifyStartRequested()
 	}
 
 	FTimerHandle TimerHandle;
-
 	GetWorldTimerManager().SetTimer(
 		TimerHandle,
 		this,

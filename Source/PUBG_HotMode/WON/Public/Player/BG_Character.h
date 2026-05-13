@@ -50,6 +50,7 @@ enum class EBGCharacterState : uint8
 	Idle        UMETA(DisplayName = "Idle"),
 	Reloading   UMETA(DisplayName = "Reloading"), // 장전 중
 	Equipping   UMETA(DisplayName = "Equipping"), // 총 꺼내는 중
+	Scoped      UMETA(DisplayName = "Scoped"), // 스코프 UI 및 정조준 상태
 	MeleeAttacking UMETA(DisplayName = "MeleeAttacking"), // 근접 공격 중
 	Dead        UMETA(DisplayName = "Dead")       // 사망
 };

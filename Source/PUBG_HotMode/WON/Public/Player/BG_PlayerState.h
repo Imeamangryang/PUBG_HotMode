@@ -1,6 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerState.h"
@@ -13,4 +11,19 @@ class PUBG_HOTMODE_API ABG_PlayerState : public APlayerState
 
 public:
 	ABG_PlayerState();
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	UFUNCTION(BlueprintPure, Category = "BG|Lobby")
+	bool IsReadyToStart() const { return bReadyToStart; }
+
+	void SetReadyToStart(bool bInReadyToStart);
+
+protected:
+	UFUNCTION()
+	void OnRep_ReadyToStart();
+
+protected:
+	UPROPERTY(ReplicatedUsing = OnRep_ReadyToStart, BlueprintReadOnly, Category = "BG|Lobby")
+	bool bReadyToStart = false;
 };

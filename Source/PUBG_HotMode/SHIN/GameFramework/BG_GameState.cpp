@@ -1,6 +1,7 @@
 ﻿#include "BG_GameState.h"
 #include "GameFramework/PlayerState.h"
 #include "Net/UnrealNetwork.h"
+#include "Player/BG_PlayerState.h"
 
 ABG_GameState::ABG_GameState()
 {
@@ -116,6 +117,44 @@ void ABG_GameState::MarkLobbyPlayerListDirty()
 	OnRep_LobbyPlayerListRevision();
 }
 
+int32 ABG_GameState::GetLobbyTotalPlayerCount() const
+{
+	int32 TotalPlayerCount = 0;
+
+	for (APlayerState* PlayerState : PlayerArray)
+	{
+		if (!IsValid(PlayerState))
+		{
+			continue;
+		}
+
+		++TotalPlayerCount;
+	}
+
+	return TotalPlayerCount;
+}
+
+int32 ABG_GameState::GetLobbyReadyPlayerCount() const
+{
+	int32 ReadyPlayerCount = 0;
+
+	for (APlayerState* PlayerState : PlayerArray)
+	{
+		const ABG_PlayerState* BGPlayerState = Cast<ABG_PlayerState>(PlayerState);
+		if (!IsValid(BGPlayerState))
+		{
+			continue;
+		}
+
+		if (BGPlayerState->IsReadyToStart())
+		{
+			++ReadyPlayerCount;
+		}
+	}
+
+	return ReadyPlayerCount;
+}
+
 void ABG_GameState::OnRep_CurrentMatchState()
 {
 	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] MatchState changed to: %s"),
@@ -141,3 +180,4 @@ void ABG_GameState::OnRep_LobbyPlayerListRevision()
 
 	OnLobbyPlayerListChanged.Broadcast();
 }
+
