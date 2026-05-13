@@ -136,6 +136,11 @@ private: // --- Item Data ---
 	const FBG_ItemDataRow* FindInventoryItemRow(EBG_ItemType ItemType, const FGameplayTag& ItemTag,
 	                                            const TCHAR* OperationName) const;
 
+	// Add validation with resolved row; avoids duplicate registry lookup in authority add paths
+	bool CanAddItemWithRow(EBG_ItemType ItemType, const FGameplayTag& ItemTag, int32 Quantity,
+	                       const TCHAR* OperationName, int32& OutAcceptedQuantity,
+	                       const FBG_ItemDataRow*& OutItemRow) const;
+
 private: // --- Weight Calculation ---
 	// Weight-limited accepted quantity
 	int32 CalculateWeightLimitedQuantity(const FBG_ItemDataRow& ItemRow, int32 RequestedQuantity) const;

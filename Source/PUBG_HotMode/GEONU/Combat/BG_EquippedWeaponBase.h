@@ -10,6 +10,7 @@
 #include "BG_EquippedWeaponBase.generated.h"
 
 class ABG_Character;
+class ABG_Scope;
 class USceneComponent;
 class UStaticMeshComponent;
 
@@ -121,8 +122,35 @@ public: // --- Weapon Runtime State ---
 	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
 	bool IsReloadingWeapon() const { return bIsReloadingWeapon; }
 
-	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Debug")
 	bool UsesInfiniteDebugAmmo() const { return bUseInfiniteDebugAmmo; }
+
+	UFUNCTION(BlueprintCallable, Category="Equipped Weapon|Debug")
+	void SetUseInfiniteDebugAmmo(bool bNewUseInfiniteDebugAmmo);
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Scope")
+	bool HasScope() const { return bHasScope; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Scope")
+	bool IsScoping() const { return bIsScoping; }
+
+	UFUNCTION(BlueprintCallable, Category="Equipped Weapon|Scope")
+	void SetScoping(bool bNewIsScoping);
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Scope")
+	float GetScopeMagnification() const { return ScopeMagnification; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Scope")
+	FName GetScopeAttachSocketName() const { return ScopeAttachSocketName; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Scope")
+	TSubclassOf<ABG_Scope> GetScopeActorClass() const { return ScopeActorClass; }
+
+	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Scope")
+	ABG_Scope* GetScopeActor() const { return ScopeActor; }
+
+	UFUNCTION(BlueprintCallable, Category="Equipped Weapon|Scope")
+	void SetScopeActor(ABG_Scope* NewScopeActor);
 
 	UFUNCTION(BlueprintPure, Category="Equipped Weapon|Runtime")
 	bool CanFire(int32 AmmoCost = 1) const;
@@ -211,9 +239,20 @@ private: // --- Authoring Data ---
 		meta=(AllowPrivateAccess="true", ClampMin="0"))
 	int32 DefaultMagazineCapacity = 0;
 
-	// Comment out this flag later when reload should strictly consume inventory ammo.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Debug", meta=(AllowPrivateAccess="true"))
-	bool bUseInfiniteDebugAmmo = true;
+	UPROPERTY(Replicated, EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Debug", meta=(AllowPrivateAccess="true"))
+	bool bUseInfiniteDebugAmmo = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Scope", meta=(AllowPrivateAccess="true"))
+	bool bHasScope = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Scope", meta=(AllowPrivateAccess="true", ClampMin="1.0"))
+	float ScopeMagnification = 1.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Scope", meta=(AllowPrivateAccess="true"))
+	FName ScopeAttachSocketName = TEXT("Scope");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Equipped Weapon|Scope", meta=(AllowPrivateAccess="true"))
+	TSubclassOf<ABG_Scope> ScopeActorClass = nullptr;
 
 private: // --- Runtime Data ---
 	UPROPERTY(Transient, BlueprintReadOnly, Category="Equipped Weapon", meta=(AllowPrivateAccess="true"))
@@ -238,4 +277,12 @@ private: // --- Runtime Data ---
 	UPROPERTY(Replicated, VisibleInstanceOnly, BlueprintReadOnly, Category="Equipped Weapon|Runtime",
 		meta=(AllowPrivateAccess="true"))
 	bool bIsReloadingWeapon = false;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Equipped Weapon|Scope",
+		meta=(AllowPrivateAccess="true"))
+	bool bIsScoping = false;
+
+	UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category="Equipped Weapon|Scope",
+		meta=(AllowPrivateAccess="true"))
+	TObjectPtr<ABG_Scope> ScopeActor = nullptr;
 };

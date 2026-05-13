@@ -96,12 +96,14 @@ bool UBG_InventoryComponent::Auth_AddItem(EBG_ItemType ItemType, FGameplayTag It
 		return false;
 
 	int32 AcceptedQuantity = 0;
-	if (!CanAddItem(ItemType, ItemTag, Quantity, AcceptedQuantity) || AcceptedQuantity <= 0)
+	const FBG_ItemDataRow* ItemRow = nullptr;
+	if (!CanAddItemWithRow(
+		ItemType, ItemTag, Quantity, TEXT("Auth_AddItem"), AcceptedQuantity, ItemRow)
+		|| AcceptedQuantity <= 0
+		|| !ItemRow)
+	{
 		return false;
-
-	const FBG_ItemDataRow* ItemRow = FindInventoryItemRow(ItemType, ItemTag, TEXT("Auth_AddItem"));
-	if (!ItemRow)
-		return false;
+	}
 
 	OutAddedQuantity = InventoryList.AddQuantity(
 		ItemType, ItemTag, AcceptedQuantity, ItemRow->MaxStackSize);
@@ -224,53 +226,9 @@ bool UBG_InventoryComponent::Auth_DropItem(
 bool UBG_InventoryComponent::CanAddItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity,
                                         int32& OutAcceptedQuantity) const
 {
-	OutAcceptedQuantity = 0;
-
-	if (!(Quantity > 0))
-	{
-		LOGE(TEXT("%s: CanAddItem failed because quantity %d was not positive."),
-			*GetNameSafe(this), Quantity);
-		return false;
-	}
-
-	const FBG_ItemDataRow* ItemRow = FindInventoryItemRow(ItemType, ItemTag, TEXT("CanAddItem"));
-	if (!ItemRow)
-		return false;
-
-	if (!ItemRow->bStackable)
-	{
-		LOGE(TEXT("%s: CanAddItem failed because item row %s is not stackable."),
-			*GetNameSafe(this), *ItemTag.ToString());
-		return false;
-	}
-
-	if (!(ItemRow->MaxStackSize > 0))
-	{
-		LOGE(TEXT("%s: CanAddItem failed because item row %s has invalid MaxStackSize %d."),
-			*GetNameSafe(this), *ItemTag.ToString(), ItemRow->MaxStackSize);
-		return false;
-	}
-
-	if (!(ItemRow->UnitWeight >= 0.f))
-	{
-		LOGE(TEXT("%s: CanAddItem failed because item row %s has invalid UnitWeight %.2f."),
-			*GetNameSafe(this), *ItemTag.ToString(), ItemRow->UnitWeight);
-		return false;
-	}
-
-	OutAcceptedQuantity = CalculateWeightLimitedQuantity(*ItemRow, Quantity);
-	if (OutAcceptedQuantity <= 0)
-	{
-		LOGW(TEXT("%s: CanAddItem rejected %s %s because inventory is overweight. CurrentWeight=%.2f, MaxWeight=%.2f."),
-		     *GetNameSafe(this),
-		     *GetItemTypeName(ItemType),
-		     *ItemTag.ToString(),
-		     CurrentWeight,
-		     MaxWeight);
-		return false;
-	}
-
-	return true;
+	const FBG_ItemDataRow* ItemRow = nullptr;
+	return CanAddItemWithRow(
+		ItemType, ItemTag, Quantity, TEXT("CanAddItem"), OutAcceptedQuantity, ItemRow);
 }
 
 void UBG_InventoryComponent::Server_DropItem_Implementation(
@@ -453,6 +411,66 @@ const FBG_ItemDataRow* UBG_InventoryComponent::FindInventoryItemRow(
 	}
 
 	return RegistrySubsystem->FindItemRow(ItemType, ItemTag);
+}
+
+bool UBG_InventoryComponent::CanAddItemWithRow(
+	EBG_ItemType ItemType,
+	const FGameplayTag& ItemTag,
+	int32 Quantity,
+	const TCHAR* OperationName,
+	int32& OutAcceptedQuantity,
+	const FBG_ItemDataRow*& OutItemRow) const
+{
+	OutAcceptedQuantity = 0;
+	OutItemRow = nullptr;
+
+	if (!(Quantity > 0))
+	{
+		LOGE(TEXT("%s: %s failed because quantity %d was not positive."),
+			*GetNameSafe(this), OperationName, Quantity);
+		return false;
+	}
+
+	const FBG_ItemDataRow* ItemRow = FindInventoryItemRow(ItemType, ItemTag, OperationName);
+	if (!ItemRow)
+		return false;
+
+	if (!ItemRow->bStackable)
+	{
+		LOGE(TEXT("%s: %s failed because item row %s is not stackable."),
+			*GetNameSafe(this), OperationName, *ItemTag.ToString());
+		return false;
+	}
+
+	if (!(ItemRow->MaxStackSize > 0))
+	{
+		LOGE(TEXT("%s: %s failed because item row %s has invalid MaxStackSize %d."),
+			*GetNameSafe(this), OperationName, *ItemTag.ToString(), ItemRow->MaxStackSize);
+		return false;
+	}
+
+	if (!(ItemRow->UnitWeight >= 0.f))
+	{
+		LOGE(TEXT("%s: %s failed because item row %s has invalid UnitWeight %.2f."),
+			*GetNameSafe(this), OperationName, *ItemTag.ToString(), ItemRow->UnitWeight);
+		return false;
+	}
+
+	OutAcceptedQuantity = CalculateWeightLimitedQuantity(*ItemRow, Quantity);
+	if (OutAcceptedQuantity <= 0)
+	{
+		LOGW(TEXT("%s: %s rejected %s %s because inventory is overweight. CurrentWeight=%.2f, MaxWeight=%.2f."),
+		     *GetNameSafe(this),
+		     OperationName,
+		     *GetItemTypeName(ItemType),
+		     *ItemTag.ToString(),
+		     CurrentWeight,
+		     MaxWeight);
+		return false;
+	}
+
+	OutItemRow = ItemRow;
+	return true;
 }
 
 int32 UBG_InventoryComponent::CalculateWeightLimitedQuantity(const FBG_ItemDataRow& ItemRow,

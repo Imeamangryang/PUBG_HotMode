@@ -885,6 +885,55 @@ bool ABG_Character::Server_SetWeaponState_Validate(EBGWeaponPoseType NewWeaponPo
 	return true;
 }
 
+bool ABG_Character::SetInfiniteAmmo(bool bNewUseInfiniteAmmo)
+{
+	if (!EquipmentComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: SetInfiniteAmmo failed because EquipmentComponent was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	ABG_EquippedWeaponBase* ActiveWeapon = EquipmentComponent->GetActiveEquippedWeaponActor();
+	if (!ActiveWeapon)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: SetInfiniteAmmo failed because active equipped weapon was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	if (!HasAuthority())
+	{
+		Server_SetInfiniteAmmo(bNewUseInfiniteAmmo);
+		return true;
+	}
+
+	ActiveWeapon->SetUseInfiniteDebugAmmo(bNewUseInfiniteAmmo);
+
+	if (WeaponFireComponent)
+	{
+		WeaponFireComponent->RefreshAmmoStateFromEquipment();
+	}
+	else
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: SetInfiniteAmmo could not refresh ammo because WeaponFireComponent was null."), *GetNameSafe(this));
+	}
+
+	UE_LOG(LogBGCharacter, Log, TEXT("%s: Set active weapon infinite debug ammo to %s for %s."),
+		*GetNameSafe(this),
+		bNewUseInfiniteAmmo ? TEXT("true") : TEXT("false"),
+		*GetNameSafe(ActiveWeapon));
+	return true;
+}
+
+void ABG_Character::Server_SetInfiniteAmmo_Implementation(bool bNewUseInfiniteAmmo)
+{
+	SetInfiniteAmmo(bNewUseInfiniteAmmo);
+}
+
+bool ABG_Character::Server_SetInfiniteAmmo_Validate(bool bNewUseInfiniteAmmo)
+{
+	return true;
+}
+
 void ABG_Character::SetCurrentInteractableWeapon(AActor* NewInteractableWeapon)
 {
 	CurrentInteractableWeapon = NewInteractableWeapon;
@@ -1014,6 +1063,45 @@ void ABG_Character::UseInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag
 	ItemUseComponent->UseItem(ItemType, ItemTag);
 }
 
+bool ABG_Character::GiveInventoryItem(
+	EBG_ItemType ItemType,
+	FGameplayTag ItemTag,
+	int32 Quantity,
+	int32& OutAddedQuantity)
+{
+	OutAddedQuantity = 0;
+
+	if (!InventoryComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: GiveInventoryItem failed because InventoryComponent was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	if (!HasAuthority())
+	{
+		Server_GiveInventoryItem(ItemType, ItemTag, Quantity);
+		return true;
+	}
+
+	if (!InventoryComponent->Auth_AddItem(ItemType, ItemTag, Quantity, OutAddedQuantity))
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: GiveInventoryItem failed for %s %s x%d."),
+			*GetNameSafe(this),
+			*StaticEnum<EBG_ItemType>()->GetNameStringByValue(static_cast<int64>(ItemType)),
+			*ItemTag.ToString(),
+			Quantity);
+		return false;
+	}
+
+	UE_LOG(LogBGCharacter, Log, TEXT("%s: Gave inventory item %s %s x%d/%d."),
+		*GetNameSafe(this),
+		*StaticEnum<EBG_ItemType>()->GetNameStringByValue(static_cast<int64>(ItemType)),
+		*ItemTag.ToString(),
+		OutAddedQuantity,
+		Quantity);
+	return true;
+}
+
 void ABG_Character::Server_PickupWorldItem_Implementation(
 	ABG_WorldItemBase* WorldItem,
 	int32 Quantity)
@@ -1029,6 +1117,23 @@ void ABG_Character::Server_PickupWorldItem_Implementation(
 	{
 		Client_ReceiveInventoryFailure(FailReason, WorldItem->GetItemType(), WorldItem->GetItemTag());
 	}
+}
+
+void ABG_Character::Server_GiveInventoryItem_Implementation(
+	EBG_ItemType ItemType,
+	FGameplayTag ItemTag,
+	int32 Quantity)
+{
+	int32 AddedQuantity = 0;
+	GiveInventoryItem(ItemType, ItemTag, Quantity, AddedQuantity);
+}
+
+bool ABG_Character::Server_GiveInventoryItem_Validate(
+	EBG_ItemType ItemType,
+	FGameplayTag ItemTag,
+	int32 Quantity)
+{
+	return true;
 }
 
 void ABG_Character::Client_ReceiveInventoryFailure_Implementation(

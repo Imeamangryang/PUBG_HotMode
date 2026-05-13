@@ -9,6 +9,9 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "Player/BG_Character.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "TimerManager.h"
@@ -269,6 +272,11 @@ void UBG_WeaponFireComponent::ApplyTemporaryWeaponProfile(EBGWeaponPoseType Weap
 	SyncAmmoFromEquipment();
 }
 
+void UBG_WeaponFireComponent::RefreshAmmoStateFromEquipment()
+{
+	SyncAmmoFromEquipment();
+}
+
 void UBG_WeaponFireComponent::Server_RequestSingleFire_Implementation()
 {
 	ExecuteFire();
@@ -383,17 +391,33 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 		}
 	}
 
-	FVector ViewLocation = FVector::ZeroVector;
-	FRotator ViewRotation = FRotator::ZeroRotator;
-	CachedCharacter->GetActorEyesViewPoint(ViewLocation, ViewRotation);
+	FVector AimTraceStart = FVector::ZeroVector;
+	FVector AimTarget = FVector::ZeroVector;
+	if (!ResolveScreenCenterAimTarget(*FireSettings, AimTraceStart, AimTarget))
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ExecuteFire failed because screen center aim target could not be resolved."), *GetNameSafe(this));
+		return false;
+	}
 
-	const FVector ShotStart = ViewLocation;
-	const FVector BaseShotDirection = ViewRotation.Vector();
-
+	FVector ShotStart = FVector::ZeroVector;
 	FTransform MuzzleTransform;
 	if (EquippedWeapon->GetMuzzleTransform(MuzzleTransform))
 	{
 		EquippedWeapon->NotifyFireTriggered(MuzzleTransform, FireAnimationSequence + 1);
+	}
+	if (!ResolveMuzzleShotStart(EquippedWeapon, ShotStart))
+	{
+		ShotStart = AimTraceStart;
+	}
+
+	const FVector BaseShotDirection = (AimTarget - ShotStart).GetSafeNormal();
+	if (BaseShotDirection.IsNearlyZero())
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ExecuteFire failed because muzzle shot direction was nearly zero. ShotStart=%s AimTarget=%s"),
+			*GetNameSafe(this),
+			*ShotStart.ToString(),
+			*AimTarget.ToString());
+		return false;
 	}
 
 	const float RecoilPitchOffset = FireSettings->RecoilPitchDegrees > 0.f
@@ -431,6 +455,7 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 			ApplyHitResult(HitResult, *FireSettings);
 		}
 
+		PlayWeaponFireEffects(ShotStart, bDidHit ? HitResult.ImpactPoint : ShotEnd, ShotDirection, bDidHit, WeaponPoseType);
 		Multicast_PlayWeaponFireDebug(ShotStart, ShotEnd, bDidHit ? HitResult.ImpactPoint : ShotEnd, bDidHit, WeaponPoseType);
 	}
 
@@ -438,6 +463,71 @@ bool UBG_WeaponFireComponent::ExecuteFire()
 	MarkFireAnimationTriggered();
 	SyncAmmoFromEquipment();
 	BroadcastAmmoState();
+	return true;
+}
+
+bool UBG_WeaponFireComponent::ResolveScreenCenterAimTarget(
+	const FBGWeaponFireSettings& Settings,
+	FVector& OutAimStart,
+	FVector& OutAimTarget) const
+{
+	OutAimStart = FVector::ZeroVector;
+	OutAimTarget = FVector::ZeroVector;
+
+	if (!CachedCharacter)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ResolveScreenCenterAimTarget failed because CachedCharacter was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	FVector ViewLocation = FVector::ZeroVector;
+	FRotator ViewRotation = FRotator::ZeroRotator;
+	CachedCharacter->GetActorEyesViewPoint(ViewLocation, ViewRotation);
+
+	OutAimStart = ViewLocation;
+	const FVector CameraForward = ViewRotation.Vector();
+	if (CameraForward.IsNearlyZero())
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ResolveScreenCenterAimTarget failed because camera forward vector was nearly zero."), *GetNameSafe(this));
+		return false;
+	}
+
+	const FVector CameraTraceEnd = OutAimStart + (CameraForward * Settings.Range);
+
+	FHitResult CameraHitResult;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(ScreenCenterAim), false, CachedCharacter);
+	Params.bReturnPhysicalMaterial = false;
+
+	const bool bDidHit = GetWorld()
+		&& GetWorld()->LineTraceSingleByChannel(CameraHitResult, OutAimStart, CameraTraceEnd, ECC_Visibility, Params);
+
+	// 오른쪽 어깨 카메라 보정을 위해 먼저 화면 정중앙의 목표 지점을 확정한다.
+	// 스코프/비스코프 모두 동일한 기준점을 쓰도록 화면 정중앙 목표 지점을 먼저 확정한다.
+	OutAimTarget = bDidHit ? CameraHitResult.ImpactPoint : CameraTraceEnd;
+	return true;
+}
+
+bool UBG_WeaponFireComponent::ResolveMuzzleShotStart(ABG_EquippedWeaponBase* EquippedWeapon, FVector& OutShotStart) const
+{
+	OutShotStart = FVector::ZeroVector;
+
+	if (!EquippedWeapon)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ResolveMuzzleShotStart failed because EquippedWeapon was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	FTransform MuzzleTransform;
+	if (!EquippedWeapon->GetMuzzleTransform(MuzzleTransform))
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ResolveMuzzleShotStart failed because muzzle socket %s could not be resolved on %s."),
+			*GetNameSafe(this),
+			*EquippedWeapon->GetMuzzleSocketName().ToString(),
+			*GetNameSafe(EquippedWeapon));
+		return false;
+	}
+
+	OutShotStart = MuzzleTransform.GetLocation();
 	return true;
 }
 
@@ -549,6 +639,21 @@ void UBG_WeaponFireComponent::PlayWeaponFireAnimation(EBGWeaponPoseType WeaponPo
 	{
 		BodyMesh->GetAnimInstance()->Montage_Play(MontageToPlay, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, false);
 	}
+}
+
+void UBG_WeaponFireComponent::PlayWeaponFireEffects(
+	const FVector& MuzzleLocation,
+	const FVector& ImpactLocation,
+	const FVector& ShotDirection,
+	bool bDidHit,
+	EBGWeaponPoseType WeaponPoseType)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	Multicast_PlayWeaponFireEffects(MuzzleLocation, ImpactLocation, ShotDirection, bDidHit, WeaponPoseType);
 }
 
 void UBG_WeaponFireComponent::BroadcastAmmoState() const
@@ -864,7 +969,6 @@ void UBG_WeaponFireComponent::RefreshReserveAmmo()
 	{
 		if (EquippedWeapon->UsesInfiniteDebugAmmo())
 		{
-			// Comment out this block later when reserve ammo should come only from the replicated inventory count.
 			CurrentReserveAmmo = 999;
 			return;
 		}
@@ -920,75 +1024,6 @@ bool UBG_WeaponFireComponent::ApplyTemporaryAmmoProfileIfNeeded(const TCHAR* Ope
 	return true;
 }
 
-bool UBG_WeaponFireComponent::TryStartTemporaryReload()
-{
-	if (!CachedCharacter)
-	{
-		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartTemporaryReload failed because CachedCharacter was null."), *GetNameSafe(this));
-		return false;
-	}
-
-	if (CurrentWeaponPoseType == EBGWeaponPoseType::None || CurrentMagazineAmmo >= CurrentMaxMagazineAmmo)
-	{
-		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartTemporaryReload failed because temporary reload was not possible. CurrentMagazineAmmo=%d CurrentMaxMagazineAmmo=%d"), *GetNameSafe(this), CurrentMagazineAmmo, CurrentMaxMagazineAmmo);
-		return false;
-	}
-
-	bIsHoldingFireInput = false;
-	StopAutomaticFire();
-	const float ReloadDuration = FMath::Max(0.f, TemporaryReloadDuration);
-	CachedCharacter->StartTimedCharacterState(EBGCharacterState::Reloading, ReloadDuration);
-	Multicast_PlayReloadAnimation(CachedCharacter->GetEquippedWeaponPoseType());
-
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
-		if (ReloadDuration <= KINDA_SMALL_NUMBER)
-		{
-			CompleteTemporaryReload();
-			return true;
-		}
-
-		World->GetTimerManager().SetTimer(ReloadTimerHandle, this, &UBG_WeaponFireComponent::CompleteTemporaryReload, ReloadDuration, false);
-		return true;
-	}
-
-	UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartTemporaryReload failed because World was null."), *GetNameSafe(this));
-	return false;
-}
-
-void UBG_WeaponFireComponent::CompleteTemporaryReload()
-{
-	const int32 AmmoNeeded = FMath::Max(0, CurrentMaxMagazineAmmo - CurrentMagazineAmmo);
-	const int32 AmmoToLoad = FMath::Min(AmmoNeeded, CurrentReserveAmmo);
-	if (AmmoToLoad <= 0)
-	{
-		if (AmmoNeeded > 0)
-		{
-			UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: CompleteTemporaryReload using code-only refill because no reserve ammo is available."), *GetNameSafe(this));
-			CurrentMagazineAmmo = CurrentMaxMagazineAmmo;
-			BroadcastAmmoState();
-			if (CachedCharacter)
-			{
-				CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
-			}
-			return;
-		}
-
-		CancelReload();
-		return;
-	}
-
-	CurrentMagazineAmmo += AmmoToLoad;
-	CurrentReserveAmmo -= AmmoToLoad;
-	BroadcastAmmoState();
-
-	if (CachedCharacter)
-	{
-		CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
-	}
-}
-
 bool UBG_WeaponFireComponent::TryStartReload()
 {
 	if (!CachedCharacter)
@@ -1009,8 +1044,8 @@ bool UBG_WeaponFireComponent::TryStartReload()
 	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
 	if (!GetActiveWeaponContext(WeaponItemTag, WeaponRow, WeaponSlot, TEXT("TryStartReload")) || !WeaponRow)
 	{
-		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: TryStartReload active weapon context failed, falling back to temporary reload."), *GetNameSafe(this));
-		return TryStartTemporaryReload();
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartReload failed because active weapon context was unavailable."), *GetNameSafe(this));
+		return false;
 	}
 
 	ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("TryStartReload"));
@@ -1054,8 +1089,7 @@ void UBG_WeaponFireComponent::CompleteReload()
 	}
 
 	UBG_EquipmentComponent* EquipmentComponent = GetEquipmentComponent(TEXT("CompleteReload"));
-	UBG_InventoryComponent* InventoryComponent = GetInventoryComponent(TEXT("CompleteReload"));
-	if (!EquipmentComponent || !InventoryComponent)
+	if (!EquipmentComponent)
 	{
 		CancelReload();
 		return;
@@ -1068,38 +1102,54 @@ void UBG_WeaponFireComponent::CompleteReload()
 		return;
 	}
 
-	const int32 InventoryAmmoCount = WeaponRow->AmmoItemTag.IsValid()
+	const bool bUseInfiniteDebugAmmo = EquippedWeapon->UsesInfiniteDebugAmmo();
+	UBG_InventoryComponent* InventoryComponent = nullptr;
+	if (!bUseInfiniteDebugAmmo)
+	{
+		InventoryComponent = GetInventoryComponent(TEXT("CompleteReload"));
+		if (!InventoryComponent)
+		{
+			CancelReload();
+			return;
+		}
+
+		if (!WeaponRow->AmmoItemTag.IsValid())
+		{
+			UE_LOG(LogBGWeaponFire, Error, TEXT("%s: CompleteReload failed because AmmoItemTag was invalid for %s."),
+				*GetNameSafe(this),
+				*WeaponItemTag.ToString());
+			CancelReload();
+			return;
+		}
+	}
+
+	const int32 InventoryAmmoCount = InventoryComponent
 		? FMath::Max(0, InventoryComponent->GetQuantity(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag))
 		: 0;
 	const int32 AmmoToLoad = EquippedWeapon->ResolveReloadAmount(InventoryAmmoCount);
 	if (AmmoToLoad <= 0)
 	{
-		EquippedWeapon->CancelWeaponReload();
 		SyncAmmoFromEquipment();
-		if (CachedCharacter)
-		{
-			CachedCharacter->FinishTimedCharacterState(EBGCharacterState::Reloading);
-		}
+		CancelReload();
 		return;
 	}
 
-	// Reload still starts from controller input, but the server resolves the final ammo amount through the weapon actor.
-	int32 ConsumedInventoryAmmo = 0;
-	if (!EquippedWeapon->UsesInfiniteDebugAmmo() && WeaponRow->AmmoItemTag.IsValid())
+	int32 ConsumedInventoryAmmo = AmmoToLoad;
+	if (!bUseInfiniteDebugAmmo)
 	{
-		// Comment out this block later when inventory ammo should no longer be consumed through the debug reload path.
+		ConsumedInventoryAmmo = 0;
 		if (!InventoryComponent->Auth_RemoveItem(EBG_ItemType::Ammo, WeaponRow->AmmoItemTag, AmmoToLoad, ConsumedInventoryAmmo)
-			|| ConsumedInventoryAmmo <= 0)
+			|| ConsumedInventoryAmmo != AmmoToLoad)
 		{
-			UE_LOG(LogBGWeaponFire, Error, TEXT("%s: CompleteReload failed because ammo removal from inventory did not succeed for %s."), *GetNameSafe(this), *WeaponRow->AmmoItemTag.ToString());
+			UE_LOG(LogBGWeaponFire, Error, TEXT("%s: CompleteReload failed because ammo removal from inventory did not consume %d of %s. Consumed=%d."),
+				*GetNameSafe(this),
+				AmmoToLoad,
+				*WeaponRow->AmmoItemTag.ToString(),
+				ConsumedInventoryAmmo);
 			EquippedWeapon->CancelWeaponReload();
 			CancelReload();
 			return;
 		}
-	}
-	else
-	{
-		ConsumedInventoryAmmo = AmmoToLoad;
 	}
 
 	EquippedWeapon->FinishWeaponReload(ConsumedInventoryAmmo);
@@ -1196,6 +1246,23 @@ const FBGWeaponFireSettings* UBG_WeaponFireComponent::ResolveFireSettings(EBGWea
 	}
 }
 
+const FBGWeaponFireEffects* UBG_WeaponFireComponent::ResolveFireEffects(EBGWeaponPoseType WeaponPoseType) const
+{
+	switch (WeaponPoseType)
+	{
+	case EBGWeaponPoseType::Pistol:
+		return &PistolFireEffects;
+	case EBGWeaponPoseType::Rifle:
+		return &RifleFireEffects;
+	case EBGWeaponPoseType::Shotgun:
+		return &ShotgunFireEffects;
+	case EBGWeaponPoseType::Sniper:
+		return &SniperFireEffects;
+	default:
+		return nullptr;
+	}
+}
+
 const FBGWeaponAmmoSettings* UBG_WeaponFireComponent::ResolveAmmoSettings(EBGWeaponPoseType WeaponPoseType) const
 {
 	switch (WeaponPoseType)
@@ -1261,6 +1328,49 @@ void UBG_WeaponFireComponent::Multicast_PlayWeaponFireDebug_Implementation(FVect
 	BroadcastHitIndicator(bDidHit, bDidHit ? ImpactPoint : TraceEnd);
 }
 
+void UBG_WeaponFireComponent::Multicast_PlayWeaponFireEffects_Implementation(
+	FVector_NetQuantize MuzzleLocation,
+	FVector_NetQuantize ImpactLocation,
+	FVector_NetQuantizeNormal ShotDirection,
+	bool bDidHit,
+	EBGWeaponPoseType WeaponPoseType)
+{
+	const FBGWeaponFireEffects* FireEffects = ResolveFireEffects(WeaponPoseType);
+	if (!FireEffects || !GetWorld())
+	{
+		return;
+	}
+
+	const FRotator ShotRotation = ShotDirection.ToOrientationRotator();
+	if (FireEffects->MuzzleImpactEffect)
+	{
+		UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), FireEffects->MuzzleImpactEffect, MuzzleLocation, ShotRotation);
+	}
+
+	if (FireEffects->MuzzleImpactNiagara)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), FireEffects->MuzzleImpactNiagara, MuzzleLocation, ShotRotation);
+	}
+
+	if (bDidHit)
+	{
+		if (FireEffects->HitImpactEffect)
+		{
+			UGameplayStatics::SpawnEmitterAtLocation(GetWorld(), FireEffects->HitImpactEffect, ImpactLocation, ShotRotation);
+		}
+
+		if (FireEffects->HitImpactNiagara)
+		{
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), FireEffects->HitImpactNiagara, ImpactLocation, ShotRotation);
+		}
+	}
+
+	if (FireEffects->FireSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(GetWorld(), FireEffects->FireSound, MuzzleLocation);
+	}
+}
+
 void UBG_WeaponFireComponent::OnRep_AmmoState()
 {
 	BroadcastAmmoState();
@@ -1276,4 +1386,12 @@ void UBG_WeaponFireComponent::OnRep_FireAnimationSequence()
 	}
 
 	LastFireAnimationWorldTime = World->GetTimeSeconds();
+
+	EBGWeaponPoseType WeaponPoseType = CurrentWeaponPoseType;
+	if (WeaponPoseType == EBGWeaponPoseType::None && CachedCharacter)
+	{
+		WeaponPoseType = CachedCharacter->GetEquippedWeaponPoseType();
+	}
+
+	PlayWeaponFireAnimation(WeaponPoseType);
 }

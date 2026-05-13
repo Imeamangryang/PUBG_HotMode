@@ -6,6 +6,7 @@
 #include "Actors/BG_BlueZone.h"
 #include "Utils/BG_LogHelper.h"
 #include "Kismet/GameplayStatics.h"
+#include "Player/BG_PlayerState.h"
 
 ABG_BattleGameMode::ABG_BattleGameMode()
 {
@@ -142,23 +143,54 @@ void ABG_BattleGameMode::HandlePlayerDeath_Implementation(AController* VictimCon
 		BG_SHIN_LOG_ERROR(TEXT("HandlePlayerDeath failed because VictimPawn was null"));
 		return;
 	}
+	
+	if (BattleStartPlayerCount <= 0)
+	{
+		BG_SHIN_LOG_WARN(TEXT("BattleStartPlayerCount was invalid at player death. Recalculating now."));
+		CacheBattleStartPlayerCount();
+	}
 
 	BG_SHIN_LOG_EVENT_BLOCK(this, "HandlePlayerDeath",
 		TEXT("VictimController=%s VictimPawn=%s"),
 		*BGLogHelper::SafeName(VictimController),
 		*BGLogHelper::SafeName(VictimPawn));
 
-	if (!VictimController)
+	ABG_Character* VictimCharacter = Cast<ABG_Character>(VictimPawn);
+	if (!VictimCharacter)
 	{
-		BG_SHIN_LOG_WARN(TEXT("HandlePlayerDeath received null VictimController. Continuing with alive-player evaluation."));
+		BG_SHIN_LOG_ERROR(TEXT("HandlePlayerDeath failed because VictimPawn was not ABG_Character"));
+		EvaluateMatchEnd();
+		return;
 	}
 
+	if (ABG_PlayerState* VictimPlayerState = VictimCharacter->GetPlayerState<ABG_PlayerState>())
+	{
+		const int32 AlivePlayerCountIncludingVictim = GetAlivePlayerCount();
+		const bool bVictimStillCountedAsAlive = VictimCharacter->GetCharacterState() != EBGCharacterState::Dead;
+		const int32 AlivePlayerCount = bVictimStillCountedAsAlive
+			? FMath::Max(0, AlivePlayerCountIncludingVictim - 1)
+			: AlivePlayerCountIncludingVictim;
+
+		const int32 FinalRank = AlivePlayerCount + 1;
+
+		VictimPlayerState->SetFinalRank(FinalRank);
+
+		BG_SHIN_LOG_INFO(TEXT("Assigned final rank to victim: Rank=%d / %d"),
+			FinalRank,
+			BattleStartPlayerCount);
+	}
+	else
+	{
+		BG_SHIN_LOG_ERROR(TEXT("HandlePlayerDeath failed because VictimCharacter PlayerState was null"));
+	}
 	
 	EvaluateMatchEnd();
 }
 
 void ABG_BattleGameMode::StartPreparationPhase()
 {
+	CacheBattleStartPlayerCount();
+	
 	ABG_GameState* BGGameState = GetGameState<ABG_GameState>();
 	if (!BGGameState)
 	{
@@ -322,6 +354,12 @@ AController* ABG_BattleGameMode::GetLastAlivePlayerController() const
 
 void ABG_BattleGameMode::EvaluateMatchEnd()
 {
+	if (BattleStartPlayerCount <= 0)
+	{
+		BG_SHIN_LOG_WARN(TEXT("BattleStartPlayerCount was invalid at match end. Recalculating now."));
+		CacheBattleStartPlayerCount();
+	}
+	
 	ABG_GameState* BGGameState = GetGameState<ABG_GameState>();
 	if (!BGGameState)
 	{
@@ -372,7 +410,15 @@ void ABG_BattleGameMode::EndBattleMatch(AController* WinnerController)
 
 	if (ABG_PlayerController* WinnerPlayerController = Cast<ABG_PlayerController>(WinnerController))
 	{
+		if (ABG_PlayerState* WinnerPlayerState = WinnerPlayerController->GetPlayerState<ABG_PlayerState>())
+		{
+			WinnerPlayerState->SetFinalRank(1);
+
+			BG_SHIN_LOG_INFO(TEXT("Assigned final rank to winner: 1 / %d"), BattleStartPlayerCount);
+		}
+
 		WinnerPlayerController->Client_ShowChickenUI();
+		UE_LOG(LogTemp, Log, TEXT("BattleStartPlayerCount at match end: %d"), BattleStartPlayerCount);
 	}
 	else
 	{
@@ -383,4 +429,34 @@ void ABG_BattleGameMode::EndBattleMatch(AController* WinnerController)
 
 	BG_SHIN_LOG_INFO(TEXT("Battle match ended. WinnerController=%s"),
 		*BGLogHelper::SafeName(WinnerController));
+}
+
+void ABG_BattleGameMode::CacheBattleStartPlayerCount()
+{
+	BattleStartPlayerCount = 0;
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		BG_SHIN_LOG_ERROR(TEXT("CacheBattleStartPlayerCount failed because World was null"));
+		return;
+	}
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!IsValid(PC))
+		{
+			continue;
+		}
+
+		++BattleStartPlayerCount;
+	}
+
+	if (ABG_GameState* BGGameState = GetGameState<ABG_GameState>())
+	{
+		BGGameState->SetBattleStartPlayerCount(BattleStartPlayerCount);
+	}
+
+	BG_SHIN_LOG_INFO(TEXT("CacheBattleStartPlayerCount result = %d"), BattleStartPlayerCount);
 }

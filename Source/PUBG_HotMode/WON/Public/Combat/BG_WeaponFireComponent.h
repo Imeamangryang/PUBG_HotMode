@@ -13,6 +13,9 @@ class UBG_EquipmentComponent;
 class UBG_InventoryComponent;
 class UBG_ItemDataRegistrySubsystem;
 class UCameraShakeBase;
+class UParticleSystem;
+class UNiagaraSystem;
+class USoundBase;
 struct FBG_WeaponFireSpecRow;
 struct FBG_WeaponItemDataRow;
 enum class EBG_EquipmentSlot : uint8;
@@ -67,6 +70,27 @@ struct FBGWeaponFireSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
 	float DebugDrawDuration = 1.0f;
+};
+
+USTRUCT(BlueprintType)
+struct FBGWeaponFireEffects
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Effects")
+	TObjectPtr<UParticleSystem> MuzzleImpactEffect = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Effects")
+	TObjectPtr<UNiagaraSystem> MuzzleImpactNiagara = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Effects")
+	TObjectPtr<UParticleSystem> HitImpactEffect = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Effects")
+	TObjectPtr<UNiagaraSystem> HitImpactNiagara = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Effects")
+	TObjectPtr<USoundBase> FireSound = nullptr;
 };
 
 USTRUCT(BlueprintType)
@@ -127,9 +151,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Combat|Weapon|Animation")
 	bool HasRecentFireAnimation(float MaxAgeSeconds = 0.2f) const;
 
-	// 임시 장착 시스템이 바뀌면 여기서 초기 탄약 프로파일도 함께 받아온다.
 	UFUNCTION(BlueprintCallable, Category = "Combat|Weapon")
 	void ApplyTemporaryWeaponProfile(EBGWeaponPoseType WeaponPoseType);
+
+	UFUNCTION(BlueprintCallable, Category = "Combat|Weapon")
+	void RefreshAmmoStateFromEquipment();
 
 	UPROPERTY(BlueprintAssignable, Category = "Combat|Weapon")
 	FOnBGWeaponAmmoChanged OnAmmoChanged;
@@ -156,6 +182,9 @@ protected:
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayWeaponFireDebug(FVector_NetQuantize TraceStart, FVector_NetQuantize TraceEnd, FVector_NetQuantize ImpactPoint, bool bDidHit, EBGWeaponPoseType WeaponPoseType);
 
+	UFUNCTION(NetMulticast, Unreliable)
+	void Multicast_PlayWeaponFireEffects(FVector_NetQuantize MuzzleLocation, FVector_NetQuantize ImpactLocation, FVector_NetQuantizeNormal ShotDirection, bool bDidHit, EBGWeaponPoseType WeaponPoseType);
+
 	UFUNCTION(NetMulticast, Reliable)
 	void Multicast_PlayReloadAnimation(EBGWeaponPoseType WeaponPoseType);
 
@@ -167,6 +196,7 @@ protected:
 
 private:
 	const FBGWeaponFireSettings* ResolveFireSettings(EBGWeaponPoseType WeaponPoseType) const;
+	const FBGWeaponFireEffects* ResolveFireEffects(EBGWeaponPoseType WeaponPoseType) const;
 	const FBGWeaponAmmoSettings* ResolveAmmoSettings(EBGWeaponPoseType WeaponPoseType) const;
 	EBGWeaponFireMode ResolveFireMode(EBGWeaponPoseType WeaponPoseType) const;
 	UBG_EquipmentComponent* GetEquipmentComponent(const TCHAR* OperationName) const;
@@ -180,17 +210,18 @@ private:
 	void SyncAmmoFromEquipment();
 	void RefreshReserveAmmo();
 	bool ApplyTemporaryAmmoProfileIfNeeded(const TCHAR* OperationName);
-	bool TryStartTemporaryReload();
-	void CompleteTemporaryReload();
 	bool TryStartReload();
 	void CompleteReload();
 	void CancelReload();
 	void PlayReloadAnimation(EBGWeaponPoseType WeaponPoseType);
 	bool ExecuteFire();
+	bool ResolveScreenCenterAimTarget(const FBGWeaponFireSettings& Settings, FVector& OutAimStart, FVector& OutAimTarget) const;
+	bool ResolveMuzzleShotStart(ABG_EquippedWeaponBase* EquippedWeapon, FVector& OutShotStart) const;
 	bool TraceSingleShot(const FBGWeaponFireSettings& Settings, const FVector& TraceStart, const FVector& ShotDirection, FHitResult& OutHit) const;
 	void ApplyHitResult(const FHitResult& HitResult, const FBGWeaponFireSettings& Settings) const;
 	void DrawFireDebug(const FVector& TraceStart, const FVector& TraceEnd, const FVector& ImpactLocation, bool bDidHit, const FBGWeaponFireSettings& Settings, EBGWeaponPoseType WeaponPoseType) const;
 	void PlayWeaponFireAnimation(EBGWeaponPoseType WeaponPoseType);
+	void PlayWeaponFireEffects(const FVector& MuzzleLocation, const FVector& ImpactLocation, const FVector& ShotDirection, bool bDidHit, EBGWeaponPoseType WeaponPoseType);
 	void BroadcastAmmoState() const;
 	void BroadcastHitIndicator(bool bDidHit, const FVector& ImpactLocation) const;
 	bool ConsumeAmmo(int32 AmmoCost);
@@ -209,14 +240,26 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon", meta = (AllowPrivateAccess = "true"))
 	FBGWeaponFireSettings PistolFireSettings;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon|Effects", meta = (AllowPrivateAccess = "true"))
+	FBGWeaponFireEffects PistolFireEffects;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon", meta = (AllowPrivateAccess = "true"))
 	FBGWeaponFireSettings RifleFireSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon|Effects", meta = (AllowPrivateAccess = "true"))
+	FBGWeaponFireEffects RifleFireEffects;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon", meta = (AllowPrivateAccess = "true"))
 	FBGWeaponFireSettings ShotgunFireSettings;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon|Effects", meta = (AllowPrivateAccess = "true"))
+	FBGWeaponFireEffects ShotgunFireEffects;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon", meta = (AllowPrivateAccess = "true"))
 	FBGWeaponFireSettings SniperFireSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon|Effects", meta = (AllowPrivateAccess = "true"))
+	FBGWeaponFireEffects SniperFireEffects;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Combat|Weapon|Ammo", meta = (AllowPrivateAccess = "true"))
 	FBGWeaponAmmoSettings PistolAmmoSettings;
@@ -262,9 +305,6 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true"))
 	FName ProneFireMontageSlotName = TEXT("ProneUpperBody");
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Combat|Weapon|Animation", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
-	float TemporaryReloadDuration = 1.5f;
 
 	UPROPERTY(ReplicatedUsing = OnRep_AmmoState)
 	int32 CurrentMagazineAmmo = 0;

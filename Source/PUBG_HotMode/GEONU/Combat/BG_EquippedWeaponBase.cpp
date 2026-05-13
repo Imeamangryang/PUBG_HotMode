@@ -249,6 +249,18 @@ int32 ABG_EquippedWeaponBase::GetMissingAmmoCount() const
 	return FMath::Max(0, MagazineCapacity - LoadedAmmo);
 }
 
+void ABG_EquippedWeaponBase::SetUseInfiniteDebugAmmo(bool bNewUseInfiniteDebugAmmo)
+{
+	if (bUseInfiniteDebugAmmo == bNewUseInfiniteDebugAmmo)
+		return;
+
+	bUseInfiniteDebugAmmo = bNewUseInfiniteDebugAmmo;
+	if (HasAuthority())
+	{
+		ForceNetUpdate();
+	}
+}
+
 bool ABG_EquippedWeaponBase::CanReloadWithInventoryAmmo(int32 InventoryAmmoCount) const
 {
 	if (bIsReloadingWeapon || MagazineCapacity <= 0 || LoadedAmmo >= MagazineCapacity)
@@ -310,6 +322,22 @@ void ABG_EquippedWeaponBase::CancelWeaponReload()
 	bIsReloadingWeapon = false;
 }
 
+void ABG_EquippedWeaponBase::SetScoping(bool bNewIsScoping)
+{
+	if (!bHasScope)
+	{
+		bIsScoping = false;
+		return;
+	}
+
+	bIsScoping = bNewIsScoping;
+}
+
+void ABG_EquippedWeaponBase::SetScopeActor(ABG_Scope* NewScopeActor)
+{
+	ScopeActor = NewScopeActor;
+}
+
 void ABG_EquippedWeaponBase::OnOwningCharacterChanged_Implementation(ABG_Character* NewOwningCharacter)
 {
 }
@@ -343,4 +371,5 @@ void ABG_EquippedWeaponBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 	DOREPLIFETIME(ABG_EquippedWeaponBase, MagazineCapacity);
 	DOREPLIFETIME(ABG_EquippedWeaponBase, LoadedAmmo);
 	DOREPLIFETIME(ABG_EquippedWeaponBase, bIsReloadingWeapon);
+	DOREPLIFETIME(ABG_EquippedWeaponBase, bUseInfiniteDebugAmmo);
 }

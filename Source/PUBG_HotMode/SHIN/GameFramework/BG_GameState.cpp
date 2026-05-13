@@ -16,6 +16,9 @@ void ABG_GameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(ABG_GameState, bIsPreparationPhase);
 	DOREPLIFETIME(ABG_GameState, PreparationTimeRemaining);
 	DOREPLIFETIME(ABG_GameState, LobbyPlayerListRevision);
+	DOREPLIFETIME(ABG_GameState, LobbyReadyPlayerCount);
+	DOREPLIFETIME(ABG_GameState, LobbyTotalPlayerCount);
+	DOREPLIFETIME(ABG_GameState, BattleStartPlayerCount);
 }
 
 void ABG_GameState::SetMatchState(EBG_MatchState NewState)
@@ -106,53 +109,78 @@ TArray<FString> ABG_GameState::GetLobbyPlayerNames() const
 	return LobbyPlayerNames;
 }
 
+void ABG_GameState::RecalculateLobbyPlayerCounts()
+{
+	if (!HasAuthority())
+	{
+		UE_LOG(LogTemp, Error, TEXT("[BG_GameState] RecalculateLobbyPlayerCounts failed because authority was missing"));
+		return;
+	}
+
+	int32 NewTotalPlayerCount = 0;
+	int32 NewReadyPlayerCount = 0;
+
+	UE_LOG(LogTemp, Warning, TEXT("[BG_GameState] RecalculateLobbyPlayerCounts start. PlayerArrayNum=%d"), PlayerArray.Num());
+
+	for (APlayerState* PlayerState : PlayerArray)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[BG_GameState] Recalculate inspect PlayerState=%s Class=%s"),
+			*GetNameSafe(PlayerState),
+			*GetNameSafe(PlayerState ? PlayerState->GetClass() : nullptr));
+
+		if (!IsValid(PlayerState))
+		{
+			continue;
+		}
+
+		++NewTotalPlayerCount;
+
+		if (const ABG_PlayerState* BGPlayerState = Cast<ABG_PlayerState>(PlayerState))
+		{
+			if (BGPlayerState->IsReadyToStart())
+			{
+				++NewReadyPlayerCount;
+			}
+		}
+	}
+
+	LobbyTotalPlayerCount = NewTotalPlayerCount;
+	LobbyReadyPlayerCount = NewReadyPlayerCount;
+
+	UE_LOG(LogTemp, Warning, TEXT("[BG_GameState] Recalculate result Ready=%d Total=%d"),
+		LobbyReadyPlayerCount, LobbyTotalPlayerCount);
+
+	OnRep_LobbyTotalPlayerCount();
+	OnRep_LobbyReadyPlayerCount();
+}
+
 void ABG_GameState::MarkLobbyPlayerListDirty()
 {
 	if (!HasAuthority())
 	{
 		return;
 	}
+	RecalculateLobbyPlayerCounts();
 
 	++LobbyPlayerListRevision;
 	OnRep_LobbyPlayerListRevision();
 }
 
-int32 ABG_GameState::GetLobbyTotalPlayerCount() const
+void ABG_GameState::SetBattleStartPlayerCount(int32 InBattleStartPlayerCount)
 {
-	int32 TotalPlayerCount = 0;
-
-	for (APlayerState* PlayerState : PlayerArray)
+	if (!HasAuthority())
 	{
-		if (!IsValid(PlayerState))
-		{
-			continue;
-		}
-
-		++TotalPlayerCount;
+		UE_LOG(LogTemp, Error, TEXT("SetBattleStartPlayerCount failed because authority was missing"));
+		return;
 	}
 
-	return TotalPlayerCount;
-}
-
-int32 ABG_GameState::GetLobbyReadyPlayerCount() const
-{
-	int32 ReadyPlayerCount = 0;
-
-	for (APlayerState* PlayerState : PlayerArray)
+	if (BattleStartPlayerCount == InBattleStartPlayerCount)
 	{
-		const ABG_PlayerState* BGPlayerState = Cast<ABG_PlayerState>(PlayerState);
-		if (!IsValid(BGPlayerState))
-		{
-			continue;
-		}
-
-		if (BGPlayerState->IsReadyToStart())
-		{
-			++ReadyPlayerCount;
-		}
+		return;
 	}
 
-	return ReadyPlayerCount;
+	BattleStartPlayerCount = InBattleStartPlayerCount;
+	OnRep_BattleStartPlayerCount();
 }
 
 void ABG_GameState::OnRep_CurrentMatchState()
@@ -181,3 +209,24 @@ void ABG_GameState::OnRep_LobbyPlayerListRevision()
 	OnLobbyPlayerListChanged.Broadcast();
 }
 
+void ABG_GameState::OnRep_LobbyReadyPlayerCount()
+{
+	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] LobbyReadyPlayerCount changed: %d"),
+		LobbyReadyPlayerCount);
+
+	OnLobbyPlayerListChanged.Broadcast();
+}
+
+void ABG_GameState::OnRep_LobbyTotalPlayerCount()
+{
+	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] LobbyTotalPlayerCount changed: %d"),
+		LobbyTotalPlayerCount);
+
+	OnLobbyPlayerListChanged.Broadcast();
+}
+
+void ABG_GameState::OnRep_BattleStartPlayerCount()
+{
+	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] BattleStartPlayerCount changed: %d"),
+		BattleStartPlayerCount);
+}

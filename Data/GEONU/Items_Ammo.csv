@@ -1,4 +1,4 @@
 ﻿Name,ItemType,ItemTag,DisplayName,Description,Icon,WorldItemClass,UnitWeight,bStackable,MaxStackSize
-Item.Ammo.556,Ammo,Item.Ammo.556,5.56mm,5.56mm ammunition,Texture2D'/Game/GEONU/Textures/T_BulletAutomatic.T_BulletAutomatic',,0.5,true,300
-Item.Ammo.762,Ammo,Item.Ammo.762,7.62mm,7.62mm ammunition,Texture2D'/Game/GEONU/Textures/T_BulletAutomatic.T_BulletAutomatic',,0.7,true,300
-Item.Ammo.9mm,Ammo,Item.Ammo.9mm,9mm,9mm ammunition,Texture2D'/Game/GEONU/Textures/T_BulletAutomatic.T_BulletAutomatic',,0.375,true,300
+Item.Ammo.556,Ammo,Item.Ammo.556,5.56mm,5.56mm ammunition,Texture2D'/Game/GEONU/Textures/T_Bullet_556.T_Bullet_556',BlueprintGeneratedClass'/Game/GEONU/Blueprints/Items/BP_WorldItem_Ammo556.BP_WorldItem_Ammo556_C',0.5,true,100
+Item.Ammo.762,Ammo,Item.Ammo.762,7.62mm,7.62mm ammunition,Texture2D'/Game/GEONU/Textures/T_Bullet_762.T_Bullet_762',BlueprintGeneratedClass'/Game/GEONU/Blueprints/Items/BP_WorldItem_Ammo762.BP_WorldItem_Ammo762_C',0.7,true,100
+Item.Ammo.9mm,Ammo,Item.Ammo.9mm,9mm,9mm ammunition,Texture2D'/Game/GEONU/Textures/T_BulletAutomatic.T_BulletAutomatic',,0.375,true,100

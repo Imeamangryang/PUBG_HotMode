@@ -310,6 +310,11 @@ public:
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetWeaponState(EBGWeaponPoseType NewWeaponPoseType, bool bNewWeaponEquipped);
 
+	bool SetInfiniteAmmo(bool bNewUseInfiniteAmmo);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetInfiniteAmmo(bool bNewUseInfiniteAmmo);
+
 	UFUNCTION(BlueprintCallable, Category = "Weapon")
 	void SetCurrentInteractableWeapon(AActor* NewInteractableWeapon);
 
@@ -319,8 +324,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Inventory")
 	void UseInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag);
 
+	UFUNCTION(BlueprintCallable, Category = "Inventory|Debug")
+	bool GiveInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity, int32& OutAddedQuantity);
+
 	UFUNCTION(Server, Reliable)
 	void Server_PickupWorldItem(ABG_WorldItemBase* WorldItem, int32 Quantity);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_GiveInventoryItem(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
 
 	UFUNCTION(Client, Reliable)
 	void Client_ReceiveInventoryFailure(EBGInventoryFailReason FailReason, EBG_ItemType ItemType,
