@@ -18,7 +18,6 @@ void ABG_GameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(ABG_GameState, LobbyPlayerListRevision);
 	DOREPLIFETIME(ABG_GameState, LobbyReadyPlayerCount);
 	DOREPLIFETIME(ABG_GameState, LobbyTotalPlayerCount);
-	DOREPLIFETIME(ABG_GameState, BattleStartPlayerCount);
 }
 
 void ABG_GameState::SetMatchState(EBG_MatchState NewState)
@@ -166,23 +165,6 @@ void ABG_GameState::MarkLobbyPlayerListDirty()
 	OnRep_LobbyPlayerListRevision();
 }
 
-void ABG_GameState::SetBattleStartPlayerCount(int32 InBattleStartPlayerCount)
-{
-	if (!HasAuthority())
-	{
-		UE_LOG(LogTemp, Error, TEXT("SetBattleStartPlayerCount failed because authority was missing"));
-		return;
-	}
-
-	if (BattleStartPlayerCount == InBattleStartPlayerCount)
-	{
-		return;
-	}
-
-	BattleStartPlayerCount = InBattleStartPlayerCount;
-	OnRep_BattleStartPlayerCount();
-}
-
 void ABG_GameState::OnRep_CurrentMatchState()
 {
 	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] MatchState changed to: %s"),
@@ -223,10 +205,4 @@ void ABG_GameState::OnRep_LobbyTotalPlayerCount()
 		LobbyTotalPlayerCount);
 
 	OnLobbyPlayerListChanged.Broadcast();
-}
-
-void ABG_GameState::OnRep_BattleStartPlayerCount()
-{
-	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] BattleStartPlayerCount changed: %d"),
-		BattleStartPlayerCount);
 }

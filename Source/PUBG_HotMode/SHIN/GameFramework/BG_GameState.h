@@ -60,11 +60,6 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "BG|Lobby")
 	FOnLobbyPlayerListChanged OnLobbyPlayerListChanged;
-	
-	UFUNCTION(BlueprintPure, Category = "BG|Result")
-	int32 GetBattleStartPlayerCount() const { return BattleStartPlayerCount; }
-
-	void SetBattleStartPlayerCount(int32 InBattleStartPlayerCount);
 
 protected:
 	UFUNCTION()
@@ -84,9 +79,6 @@ protected:
 
 	UFUNCTION()
 	void OnRep_LobbyTotalPlayerCount();
-	
-	UFUNCTION()
-	void OnRep_BattleStartPlayerCount();
 
 protected:
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentMatchState, BlueprintReadOnly, Category = "BG|GameState")
@@ -106,7 +98,4 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_LobbyTotalPlayerCount, BlueprintReadOnly, Category = "BG|Lobby")
 	int32 LobbyTotalPlayerCount = 0;
-	
-	UPROPERTY(ReplicatedUsing = OnRep_BattleStartPlayerCount, BlueprintReadOnly, Category = "BG|Result")
-	int32 BattleStartPlayerCount = 0;
 };

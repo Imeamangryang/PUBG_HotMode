@@ -19,22 +19,11 @@ public:
 
 	void SetReadyToStart(bool bInReadyToStart);
 
-	UFUNCTION(BlueprintPure, Category = "BG|Result")
-	int32 GetFinalRank() const { return FinalRank; }
-
-	void SetFinalRank(int32 InFinalRank);
-
 protected:
 	UFUNCTION()
 	void OnRep_ReadyToStart();
 
-	UFUNCTION()
-	void OnRep_FinalRank();
-
 protected:
 	UPROPERTY(ReplicatedUsing = OnRep_ReadyToStart, BlueprintReadOnly, Category = "BG|Lobby")
 	bool bReadyToStart = false;
-
-	UPROPERTY(ReplicatedUsing = OnRep_FinalRank, BlueprintReadOnly, Category = "BG|Result")
-	int32 FinalRank = 0;
 };

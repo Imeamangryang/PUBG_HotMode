@@ -28,7 +28,6 @@ protected:
 	int32 GetAlivePlayerCount() const;
 	AController* GetLastAlivePlayerController() const;
 	void EndBattleMatch(AController* WinnerController);
-	void CacheBattleStartPlayerCount();
 
 protected:
 	UPROPERTY(EditDefaultsOnly, Category = "BG|Battle")
@@ -41,7 +40,4 @@ protected:
 	
 	UPROPERTY(Transient)
 	TObjectPtr<class ABG_BlueZone> BlueZoneActor = nullptr;
-	
-	UPROPERTY(Transient)
-	int32 BattleStartPlayerCount = 0;
 };
