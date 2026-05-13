@@ -7,6 +7,7 @@
 class APlayerState;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnLobbyPlayerListChanged);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnBattlePlayerCountChanged);
 
 UENUM(BlueprintType)
 enum class EBG_MatchState : uint8
@@ -58,8 +59,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "BG|Lobby")
 	int32 GetLobbyTotalPlayerCount() const { return LobbyTotalPlayerCount; }
 
+	UFUNCTION(BlueprintPure, Category = "BG|Battle")
+	int32 GetBattleTotalPlayerCount() const { return BattleTotalPlayerCount; }
+
+	UFUNCTION(BlueprintPure, Category = "BG|Battle")
+	int32 GetAlivePlayerCount() const { return AlivePlayerCount; }
+
+	void SetBattleTotalPlayerCount(int32 NewBattleTotalPlayerCount);
+	void SetAlivePlayerCount(int32 NewAlivePlayerCount);
+
 	UPROPERTY(BlueprintAssignable, Category = "BG|Lobby")
 	FOnLobbyPlayerListChanged OnLobbyPlayerListChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "BG|Battle")
+	FOnBattlePlayerCountChanged OnBattlePlayerCountChanged;
 
 protected:
 	UFUNCTION()
@@ -80,6 +93,12 @@ protected:
 	UFUNCTION()
 	void OnRep_LobbyTotalPlayerCount();
 
+	UFUNCTION()
+	void OnRep_BattleTotalPlayerCount();
+
+	UFUNCTION()
+	void OnRep_AlivePlayerCount();
+
 protected:
 	UPROPERTY(ReplicatedUsing = OnRep_CurrentMatchState, BlueprintReadOnly, Category = "BG|GameState")
 	EBG_MatchState CurrentMatchState = EBG_MatchState::Lobby;
@@ -98,4 +117,10 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_LobbyTotalPlayerCount, BlueprintReadOnly, Category = "BG|Lobby")
 	int32 LobbyTotalPlayerCount = 0;
+
+	UPROPERTY(ReplicatedUsing = OnRep_BattleTotalPlayerCount, BlueprintReadOnly, Category = "BG|Battle")
+	int32 BattleTotalPlayerCount = 0;
+
+	UPROPERTY(ReplicatedUsing = OnRep_AlivePlayerCount, BlueprintReadOnly, Category = "BG|Battle")
+	int32 AlivePlayerCount = 0;
 };

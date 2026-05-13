@@ -18,6 +18,8 @@ void ABG_GameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLif
 	DOREPLIFETIME(ABG_GameState, LobbyPlayerListRevision);
 	DOREPLIFETIME(ABG_GameState, LobbyReadyPlayerCount);
 	DOREPLIFETIME(ABG_GameState, LobbyTotalPlayerCount);
+	DOREPLIFETIME(ABG_GameState, BattleTotalPlayerCount);
+	DOREPLIFETIME(ABG_GameState, AlivePlayerCount);
 }
 
 void ABG_GameState::SetMatchState(EBG_MatchState NewState)
@@ -66,6 +68,38 @@ void ABG_GameState::SetPreparationTimeRemaining(int32 NewTimeRemaining)
 
 	PreparationTimeRemaining = NewTimeRemaining;
 	OnRep_PreparationTimeRemaining();
+}
+
+void ABG_GameState::SetBattleTotalPlayerCount(int32 NewBattleTotalPlayerCount)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (BattleTotalPlayerCount == NewBattleTotalPlayerCount)
+	{
+		return;
+	}
+
+	BattleTotalPlayerCount = NewBattleTotalPlayerCount;
+	OnRep_BattleTotalPlayerCount();
+}
+
+void ABG_GameState::SetAlivePlayerCount(int32 NewAlivePlayerCount)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (AlivePlayerCount == NewAlivePlayerCount)
+	{
+		return;
+	}
+
+	AlivePlayerCount = NewAlivePlayerCount;
+	OnRep_AlivePlayerCount();
 }
 
 TArray<FString> ABG_GameState::GetLobbyPlayerNames() const
@@ -205,4 +239,20 @@ void ABG_GameState::OnRep_LobbyTotalPlayerCount()
 		LobbyTotalPlayerCount);
 
 	OnLobbyPlayerListChanged.Broadcast();
+}
+
+void ABG_GameState::OnRep_BattleTotalPlayerCount()
+{
+	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] BattleTotalPlayerCount changed: %d"),
+		BattleTotalPlayerCount);
+
+	OnBattlePlayerCountChanged.Broadcast();
+}
+
+void ABG_GameState::OnRep_AlivePlayerCount()
+{
+	UE_LOG(LogTemp, Log, TEXT("[BG_GameState] AlivePlayerCount changed: %d"),
+		AlivePlayerCount);
+
+	OnBattlePlayerCountChanged.Broadcast();
 }

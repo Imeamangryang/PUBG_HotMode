@@ -17,7 +17,7 @@ public:
 	virtual void HandleStartingNewPlayer_Implementation(APlayerController* NewPlayer) override;
 
 	UFUNCTION(BlueprintNativeEvent, Category = "Spectator")
-	void HandlePlayerDeath(AController* VictimController, APawn* VictimPawn);
+	void HandlePlayerDeath(AController* VictimController, APlayerState* VictimPlayerState, APawn* VictimPawn);
 
 protected:
 	void SpawnAndPossessPlayer(APlayerController* NewPlayer);

@@ -26,6 +26,7 @@
 #include "Character/Components/ParkourComponent.h"
 #include "TimerManager.h"
 #include "UI/Components/CompassComponent.h"
+#include "Player/BG_PlayerState.h"
 
 DEFINE_LOG_CATEGORY(LogBGCharacter);
 
@@ -1420,6 +1421,20 @@ void ABG_Character::HandleHealthDeathStateChanged(bool bNewIsDead)
 {
 	if (bNewIsDead)
 	{
+		AController* CachedController = nullptr;
+		APlayerState* CachedPlayerState = nullptr;
+
+		if (HasAuthority())
+		{
+			CachedController = GetController();
+			CachedPlayerState = GetPlayerState();
+
+			UE_LOG(LogBGCharacter, Warning, TEXT("[BG_Character] Death notify. Character=%s CachedController=%s CachedPlayerState=%s"),
+				*GetNameSafe(this),
+				*GetNameSafe(CachedController),
+				*GetNameSafe(CachedPlayerState));
+		}
+
 		ClearTimedCharacterState();
 		SetCharacterStateValue(EBGCharacterState::Dead);
 		bIsAiming = false;
@@ -1440,7 +1455,7 @@ void ABG_Character::HandleHealthDeathStateChanged(bool bNewIsDead)
 			UE_LOG(LogBGCharacter, Error, TEXT("%s: HandleHealthDeathStateChanged failed because CharacterMovement was null."), *GetNameSafe(this));
 		}
 
-		if (ABG_PlayerController* BGPlayerController = Cast<ABG_PlayerController>(GetController()))
+		if (ABG_PlayerController* BGPlayerController = Cast<ABG_PlayerController>(CachedController ? CachedController : GetController()))
 		{
 			BGPlayerController->HandleControlledCharacterDeath(this);
 		}
@@ -1449,7 +1464,7 @@ void ABG_Character::HandleHealthDeathStateChanged(bool bNewIsDead)
 		{
 			if (ABG_BattleGameMode* BattleGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ABG_BattleGameMode>() : nullptr)
 			{
-				BattleGameMode->HandlePlayerDeath(GetController(), this);
+				BattleGameMode->HandlePlayerDeath(CachedController, CachedPlayerState, this);
 			}
 			else
 			{
