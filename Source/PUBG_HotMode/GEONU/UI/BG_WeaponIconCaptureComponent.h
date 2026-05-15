@@ -15,6 +15,29 @@ class USceneCaptureComponent2D;
 class USceneComponent;
 class UTextureRenderTarget2D;
 
+USTRUCT(BlueprintType)
+struct PUBG_HOTMODE_API FBGWeaponIconPreviewMetrics
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI|Weapon Preview")
+	FVector2D RenderTargetSize = FVector2D::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI|Weapon Preview", meta=(ClampMin="0.0"))
+	float OrthoWidth = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI|Weapon Preview", meta=(ClampMin="0.0"))
+	float OrthoHeight = 0.f;
+
+	bool IsValid() const
+	{
+		return RenderTargetSize.X > KINDA_SMALL_NUMBER
+			&& RenderTargetSize.Y > KINDA_SMALL_NUMBER
+			&& OrthoWidth > KINDA_SMALL_NUMBER
+			&& OrthoHeight > KINDA_SMALL_NUMBER;
+	}
+};
+
 USTRUCT()
 struct FBGWeaponIconPreviewCacheEntry
 {
@@ -31,6 +54,9 @@ struct FBGWeaponIconPreviewCacheEntry
 
 	UPROPERTY(Transient)
 	TSubclassOf<ABG_EquippedWeaponBase> EquippedWeaponClass = nullptr;
+
+	UPROPERTY(Transient)
+	FBGWeaponIconPreviewMetrics Metrics;
 
 	UPROPERTY(Transient)
 	int32 LastAccessSerial = 0;
@@ -55,6 +81,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Inventory UI|Weapon Preview")
 	FVector2D GetPreviewRenderTargetSize() const;
+
+	UFUNCTION(BlueprintPure, Category="Inventory UI|Weapon Preview")
+	FVector2D GetPreviewReferenceOrthoSize() const;
+
+	UFUNCTION(BlueprintPure, Category="Inventory UI|Weapon Preview")
+	bool GetPreviewCaptureMetrics(FName PreviewIconKey, FBGWeaponIconPreviewMetrics& OutMetrics) const;
 
 	UFUNCTION(BlueprintCallable, Category="Inventory UI|Weapon Preview")
 	void InvalidateWeaponPreview(FName PreviewIconKey);
@@ -88,11 +120,17 @@ private:
 	ABG_EquippedWeaponBase* SpawnPreviewActor(
 		TSubclassOf<ABG_EquippedWeaponBase> EquippedWeaponClass,
 		FName PreviewIconKey);
-	bool CapturePreviewActor(ABG_EquippedWeaponBase* PreviewActor, UTextureRenderTarget2D* RenderTarget);
+	bool CapturePreviewActor(
+		ABG_EquippedWeaponBase* PreviewActor,
+		UTextureRenderTarget2D* RenderTarget,
+		FBGWeaponIconPreviewMetrics& OutMetrics);
 	void ApplyPreviewTransform(ABG_EquippedWeaponBase* PreviewActor, const FVector& PreviewBaseLocation) const;
 	bool BuildPreviewBounds(const TArray<UPrimitiveComponent*>& PrimitiveComponents, FBox& OutBounds) const;
 	float CalculateOrthoWidthForBounds(const FBox& PreviewBounds) const;
-	void ConfigureCaptureCameraForBounds(const FBox& PreviewBounds);
+	bool ConfigureCaptureCameraForBounds(const FBox& PreviewBounds, float& OutOrthoWidth);
+	FBGWeaponIconPreviewMetrics BuildPreviewMetrics(
+		float OrthoWidth,
+		const UTextureRenderTarget2D* RenderTarget) const;
 	void DestroyPreviewEntry(FBGWeaponIconPreviewCacheEntry& Entry);
 	void TrimPreviewCache();
 	void DisablePreviewActorCollision(AActor* PreviewActor) const;

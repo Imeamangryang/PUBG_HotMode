@@ -213,7 +213,12 @@ private:
 	bool TryStartReload();
 	void CompleteReload();
 	void CancelReload();
-	void PlayReloadAnimation(EBGWeaponPoseType WeaponPoseType);
+	UAnimMontage* ResolveReloadMontage(EBGWeaponPoseType WeaponPoseType) const;
+	bool PlayReloadAnimation(EBGWeaponPoseType WeaponPoseType, bool bBindReloadCompletion);
+	void HandleReloadMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	void HandleReloadCompletionTimeout();
+	void ClearReloadCompletion();
+	void StopReloadAnimation(float BlendOutTime = 0.1f);
 	bool ExecuteFire();
 	bool ResolveScreenCenterAimTarget(const FBGWeaponFireSettings& Settings, FVector& OutAimStart, FVector& OutAimTarget) const;
 	bool ResolveMuzzleShotStart(ABG_EquippedWeaponBase* EquippedWeapon, FVector& OutShotStart) const;
@@ -325,5 +330,7 @@ private:
 	float LastFireAnimationWorldTime = -1000.f;
 	bool bIsHoldingFireInput = false;
 	FTimerHandle AutomaticFireTimerHandle;
-	FTimerHandle ReloadTimerHandle;
+	FTimerHandle ReloadCompletionTimerHandle;
+	UPROPERTY()
+	TObjectPtr<UAnimMontage> ActiveReloadMontage = nullptr;
 };

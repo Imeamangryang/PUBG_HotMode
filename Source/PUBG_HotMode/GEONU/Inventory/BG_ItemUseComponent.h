@@ -158,6 +158,7 @@ private:
 	void ResetItemUseState();
 	void ClearItemUseTimer();
 	void RefreshProgressTickEnabled();
+	void RefreshOwnerMovementSpeed();
 	void NotifyItemUseFailure(EBGInventoryFailReason FailReason, EBG_ItemType ItemType,
 	                          const FGameplayTag& ItemTag) const;
 
@@ -171,10 +172,6 @@ private:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_ItemUseState, Category="Item Use",
 		meta=(AllowPrivateAccess="true"))
 	FBG_ItemUseRepState ItemUseState;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Item Use",
-		meta=(AllowPrivateAccess="true", ClampMin="0.0"))
-	float MovementCancelSpeedThreshold = 5.f;
 
 	UPROPERTY(Transient)
 	TObjectPtr<ABG_Character> CachedCharacter = nullptr;

@@ -1,5 +1,6 @@
 ﻿#include "Player/BG_PlayerController.h"
-
+#include "Components/AudioComponent.h"
+#include "Sound/SoundBase.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
@@ -18,6 +19,7 @@
 #include "InputMappingContext.h"
 #include "Actors/BG_Airplane.h"
 #include "Actors/BG_AirplaneCameraRig.h"
+#include "GameFramework/BG_BattleGameMode.h"
 #include "Kismet/GameplayStatics.h"
 
 namespace
@@ -431,8 +433,9 @@ void ABG_PlayerController::BindPawnInput()
 	BindStartedIfValid(EnhancedInputComponent, InputConfig.InteractAction.Get(), this, &ABG_PlayerController::OnInteractInputStarted);
 	BindStartedIfValid(EnhancedInputComponent, InputConfig.InventoryAction.Get(), this, &ABG_PlayerController::OnInventoryInputStarted);
 	
-	InputComponent->BindKey(EKeys::One, IE_Pressed, this, &ABG_PlayerController::OnEquipPistolInputStarted);
-	InputComponent->BindKey(EKeys::Two, IE_Pressed, this, &ABG_PlayerController::OnEquipRifleInputStarted);
+	InputComponent->BindKey(EKeys::One, IE_Pressed, this, &ABG_PlayerController::OnEquipPrimaryAInputStarted);
+	InputComponent->BindKey(EKeys::Two, IE_Pressed, this, &ABG_PlayerController::OnEquipPrimaryBInputStarted);
+	InputComponent->BindKey(EKeys::Three, IE_Pressed, this, &ABG_PlayerController::OnEquipPistolInputStarted);
 	InputComponent->BindKey(EKeys::Seven, IE_Pressed, this, &ABG_PlayerController::OnUseBandageInputStarted);
 	InputComponent->BindKey(EKeys::Zero, IE_Pressed, this, &ABG_PlayerController::OnUnequipWeaponInputStarted);
 	InputComponent->BindKey(EKeys::X, IE_Pressed, this, &ABG_PlayerController::OnUnequipWeaponInputStarted);
@@ -503,56 +506,41 @@ void ABG_PlayerController::OnAttackInputCompleted()
 	UE_LOG(LogTemp, Error, TEXT("%s: OnAttackInputCompleted failed because controlled character was null."), *GetNameSafe(this));
 }
 
-void ABG_PlayerController::OnEquipPistolInputStarted()
+void ABG_PlayerController::OnEquipPrimaryAInputStarted()
 {
-	if (ABG_Character* BGCharacter = GetBGCharacter())
-	{
-		// 임시 장착 입력이다. 나중에 인벤토리/아이템 연동이 들어오면 여기만 교체하면 된다.
-		if (!BGCharacter->HasAuthority())
-		{
-			BGCharacter->Server_SetWeaponState(EBGWeaponPoseType::Pistol, true);
-		}
-		BGCharacter->SetWeaponState(EBGWeaponPoseType::Pistol, true);
-		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip switched to Pistol."), *GetNameSafe(this));
-		return;
-	}
-
-	UE_LOG(LogTemp, Error, TEXT("%s: OnEquipPistolInputStarted failed because controlled character was null."), *GetNameSafe(this));
+	ActivateWeaponSlotFromInput(EBG_EquipmentSlot::PrimaryA);
 }
 
-void ABG_PlayerController::OnEquipRifleInputStarted()
+void ABG_PlayerController::OnEquipPrimaryBInputStarted()
+{
+	ActivateWeaponSlotFromInput(EBG_EquipmentSlot::PrimaryB);
+}
+
+void ABG_PlayerController::OnEquipPistolInputStarted()
+{
+	ActivateWeaponSlotFromInput(EBG_EquipmentSlot::Pistol);
+}
+
+void ABG_PlayerController::ActivateWeaponSlotFromInput(EBG_EquipmentSlot WeaponSlot)
 {
 	if (ABG_Character* BGCharacter = GetBGCharacter())
 	{
-		// 임시 장착 입력이다. 나중에 인벤토리/아이템 연동이 들어오면 여기만 교체하면 된다.
-		if (!BGCharacter->HasAuthority())
+		if (UBG_EquipmentComponent* EquipmentComponent = UBG_EquipmentComponent::FindEquipmentComponent(BGCharacter))
 		{
-			BGCharacter->Server_SetWeaponState(EBGWeaponPoseType::Rifle, true);
+			EquipmentComponent->ActivateWeapon(WeaponSlot);
+			return;
 		}
-		BGCharacter->SetWeaponState(EBGWeaponPoseType::Rifle, true);
-		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip switched to Rifle."), *GetNameSafe(this));
+
+		UE_LOG(LogTemp, Error, TEXT("%s: ActivateWeaponSlotFromInput failed because equipment component was null."), *GetNameSafe(this));
 		return;
 	}
 
-	UE_LOG(LogTemp, Error, TEXT("%s: OnEquipRifleInputStarted failed because controlled character was null."), *GetNameSafe(this));
+	UE_LOG(LogTemp, Error, TEXT("%s: ActivateWeaponSlotFromInput failed because controlled character was null."), *GetNameSafe(this));
 }
 
 void ABG_PlayerController::OnUnequipWeaponInputStarted()
 {
-	if (ABG_Character* BGCharacter = GetBGCharacter())
-	{
-		// 임시 해제 입력이다. 최종 인벤토리 시스템이 오면 장착 상태는 그쪽이 관리한다.
-		if (!BGCharacter->HasAuthority())
-		{
-			BGCharacter->Server_SetWeaponState(EBGWeaponPoseType::None, false);
-		}
-		BGCharacter->SetEquippedWeapon(nullptr);
-		BGCharacter->SetWeaponState(EBGWeaponPoseType::None, false);
-		UE_LOG(LogTemp, Warning, TEXT("%s: Temporary weapon equip cleared."), *GetNameSafe(this));
-		return;
-	}
-
-	UE_LOG(LogTemp, Error, TEXT("%s: OnUnequipWeaponInputStarted failed because controlled character was null."), *GetNameSafe(this));
+	ActivateWeaponSlotFromInput(EBG_EquipmentSlot::None);
 }
 
 void ABG_PlayerController::OnUseBandageInputStarted()
@@ -730,7 +718,6 @@ void ABG_PlayerController::HandleControlledCharacterDeath(ABG_Character* DeadCha
 	if (HasAuthority())
 	{
 		Client_ShowEndUI();
-		StartSpectatingOnly();
 	}
 	else if (IsLocalController())
 	{
@@ -762,7 +749,11 @@ void ABG_PlayerController::PrepareSpectatorMode_Implementation(ABG_Character* De
 	if (!DeadCharacter)
 	{
 		UE_LOG(LogTemp, Error, TEXT("%s: PrepareSpectatorMode failed because DeadCharacter was null."), *GetNameSafe(this));
+		return;
 	}
+
+	StartSpectatingOnly();
+	CurrentSpectateTarget = nullptr;
 }
 
 void ABG_PlayerController::ShowBattleWaitingTimeUI()
@@ -914,6 +905,11 @@ void ABG_PlayerController::BeginAirplaneView(ABG_Airplane* InAirplane)
 	BG_SHIN_LOG_INFO(TEXT("BeginAirplaneView succeeded with airplane=%s rig=%s"),
 		*BGLogHelper::SafeName(InAirplane),
 		*BGLogHelper::SafeName(AirplaneCameraRig));
+	
+	if (BlueZoneOverlayWidget)
+	{
+		BlueZoneOverlayWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
 }
 
 void ABG_PlayerController::EndAirplaneView()
@@ -958,6 +954,16 @@ void ABG_PlayerController::TryExitAirplane()
 
 	BGCharacter->Server_BeginAirplaneDrop(DropLocation, DropForwardVector);
 	EndAirplaneView();
+	StartAirDropSound();
+	
+	if (BlueZoneOverlayWidget)
+	{
+		BlueZoneOverlayWidget->SetVisibility(ESlateVisibility::Hidden);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: TryExitAirplane could not hide BlueZoneOverlayWidget because it was null."), *GetNameSafe(this));
+	}
 }
 
 void ABG_PlayerController::ShowEndUI()
@@ -1076,4 +1082,119 @@ void ABG_PlayerController::UpdateBlueZoneOverlay()
 			? ESlateVisibility::Visible
 			: ESlateVisibility::Hidden
 	);
+}
+
+void ABG_PlayerController::RequestStartSpectating()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	Server_RequestStartSpectating();
+}
+
+void ABG_PlayerController::Server_RequestStartSpectating_Implementation()
+{
+	ABG_BattleGameMode* BattleGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ABG_BattleGameMode>() : nullptr;
+	if (!BattleGameMode)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: Server_RequestStartSpectating failed because BattleGameMode was null."), *GetNameSafe(this));
+		return;
+	}
+
+	APawn* SpectateTargetPawn = BattleGameMode->FindInitialSpectateTarget(this);
+	if (!SpectateTargetPawn)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s: Server_RequestStartSpectating found no valid spectate target."), *GetNameSafe(this));
+		return;
+	}
+
+	Client_StartSpectating(SpectateTargetPawn);
+}
+
+void ABG_PlayerController::Client_StartSpectating_Implementation(APawn* SpectateTargetPawn)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (!IsValid(SpectateTargetPawn))
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: Client_StartSpectating failed because SpectateTargetPawn was invalid."), *GetNameSafe(this));
+		return;
+	}
+
+	CurrentSpectateTarget = SpectateTargetPawn;
+
+	SetIgnoreLookInput(false);
+	SetViewTargetWithBlend(SpectateTargetPawn, 0.35f);
+
+	UE_LOG(LogTemp, Log, TEXT("%s: Started spectating target %s."),
+		*GetNameSafe(this),
+		*GetNameSafe(SpectateTargetPawn));
+}
+
+void ABG_PlayerController::Client_StopSpectating_Implementation()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	CurrentSpectateTarget = nullptr;
+
+	if (GetPawn())
+	{
+		SetViewTargetWithBlend(GetPawn(), 0.35f);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("%s: Stopped spectating because no valid target remained."),
+		*GetNameSafe(this));
+}
+
+void ABG_PlayerController::StartAirDropSound()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (AirDropSoundComponent)
+	{
+		return;
+	}
+
+	if (USoundBase* AirDropSound = LoadObject<USoundBase>(nullptr, TEXT("/Game/WON/SFX/Air_Drop_Cliping.Air_Drop_Cliping")))
+	{
+		AirDropSoundComponent = UGameplayStatics::SpawnSound2D(this, AirDropSound);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: StartAirDropSound failed because Air_Drop_Cliping could not be loaded."), *GetNameSafe(this));
+	}
+}
+
+void ABG_PlayerController::StopAirDropSoundAndPlayParachuteOpen()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (AirDropSoundComponent)
+	{
+		AirDropSoundComponent->Stop();
+		AirDropSoundComponent = nullptr;
+	}
+
+	if (USoundBase* ParachuteOpenSound = LoadObject<USoundBase>(nullptr, TEXT("/Game/WON/SFX/Parachute_Open.Parachute_Open")))
+	{
+		UGameplayStatics::PlaySound2D(this, ParachuteOpenSound);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: StopAirDropSoundAndPlayParachuteOpen failed because Parachute_Open could not be loaded."), *GetNameSafe(this));
+	}
 }

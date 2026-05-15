@@ -8,6 +8,7 @@ class ABG_Airplane;
 class USceneComponent;
 class USpringArmComponent;
 class UCameraComponent;
+class UAudioComponent;
 
 UCLASS()
 class PUBG_HOTMODE_API ABG_AirplaneCameraRig : public AActor
@@ -20,6 +21,7 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 public:
 	void Initialize(ABG_Airplane* InTargetAirplane);
@@ -48,6 +50,9 @@ protected:
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "BG|AirplaneCamera")
 	TObjectPtr<UStaticMeshComponent> VisualAirplaneMeshComponent;
+	
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> AirplaneSoundComponent = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "BG|AirplaneCamera")
 	float LookYawSpeed = 1.0f;

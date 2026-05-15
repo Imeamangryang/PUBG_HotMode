@@ -155,6 +155,18 @@ void ABG_BattleGameMode::HandlePlayerDeath_Implementation(AController* VictimCon
 
 	const int32 NewAlivePlayerCount = GetAlivePlayerCount();
 	BGGameState->SetAlivePlayerCount(NewAlivePlayerCount);
+	
+	UpdateSpectatorsForDeadTarget(VictimPawn);
+
+	if (VictimPlayerState)
+	{
+		const int32 VictimRank = NewAlivePlayerCount + 1;
+		VictimPlayerState->SetFinalRank(VictimRank);
+
+		BG_SHIN_LOG_INFO(TEXT("Assigned victim rank %d to %s"),
+			VictimRank,
+			*GetNameSafe(VictimPlayerState));
+	}
 
 	if (VictimPlayerState)
 	{
@@ -414,4 +426,137 @@ void ABG_BattleGameMode::EndBattleMatch(AController* WinnerController)
 
 	BG_SHIN_LOG_INFO(TEXT("Battle match ended. WinnerController=%s"),
 		*BGLogHelper::SafeName(WinnerController));
+}
+
+APawn* ABG_BattleGameMode::FindInitialSpectateTarget(AController* RequestingController) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PlayerController = It->Get();
+		if (!PlayerController)
+		{
+			continue;
+		}
+
+		if (PlayerController == RequestingController)
+		{
+			continue;
+		}
+
+		ABG_Character* Character = Cast<ABG_Character>(PlayerController->GetPawn());
+		if (!Character)
+		{
+			continue;
+		}
+
+		if (Character->GetCharacterState() == EBGCharacterState::Dead)
+		{
+			continue;
+		}
+
+		return Character;
+	}
+
+	return nullptr;
+}
+
+APawn* ABG_BattleGameMode::FindNextSpectateTarget(AController* RequestingController, APawn* CurrentSpectateTarget) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	TArray<APawn*> AliveTargets;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PlayerController = It->Get();
+		if (!PlayerController)
+		{
+			continue;
+		}
+
+		if (PlayerController == RequestingController)
+		{
+			continue;
+		}
+
+		ABG_Character* Character = Cast<ABG_Character>(PlayerController->GetPawn());
+		if (!Character)
+		{
+			continue;
+		}
+
+		if (Character->GetCharacterState() == EBGCharacterState::Dead)
+		{
+			continue;
+		}
+
+		AliveTargets.Add(Character);
+	}
+
+	if (AliveTargets.Num() == 0)
+	{
+		return nullptr;
+	}
+
+	if (!CurrentSpectateTarget)
+	{
+		return AliveTargets[0];
+	}
+
+	const int32 CurrentIndex = AliveTargets.IndexOfByKey(CurrentSpectateTarget);
+	if (CurrentIndex == INDEX_NONE)
+	{
+		return AliveTargets[0];
+	}
+
+	const int32 NextIndex = (CurrentIndex + 1) % AliveTargets.Num();
+	return AliveTargets[NextIndex];
+}
+
+void ABG_BattleGameMode::UpdateSpectatorsForDeadTarget(APawn* DeadTargetPawn)
+{
+	if (!DeadTargetPawn)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		ABG_PlayerController* BGPlayerController = Cast<ABG_PlayerController>(It->Get());
+		if (!BGPlayerController)
+		{
+			continue;
+		}
+
+		if (BGPlayerController->GetCurrentSpectateTarget() != DeadTargetPawn)
+		{
+			continue;
+		}
+
+		APawn* NextTarget = FindNextSpectateTarget(BGPlayerController, DeadTargetPawn);
+		if (NextTarget)
+		{
+			BGPlayerController->Client_StartSpectating(NextTarget);
+		}
+		else
+		{
+			BGPlayerController->Client_StopSpectating();
+		}
+	}
 }

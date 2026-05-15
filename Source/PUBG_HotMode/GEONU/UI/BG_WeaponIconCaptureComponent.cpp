@@ -120,7 +120,8 @@ UTextureRenderTarget2D* UBG_WeaponIconCaptureComponent::GetOrCreateWeaponPreview
 	if (!PreviewActor)
 		return nullptr;
 
-	if (!CapturePreviewActor(PreviewActor, RenderTarget))
+	FBGWeaponIconPreviewMetrics PreviewMetrics;
+	if (!CapturePreviewActor(PreviewActor, RenderTarget, PreviewMetrics))
 	{
 		PreviewActor->Destroy();
 		return nullptr;
@@ -131,6 +132,7 @@ UTextureRenderTarget2D* UBG_WeaponIconCaptureComponent::GetOrCreateWeaponPreview
 	NewEntry.BrushResource = BuildPreviewBrushResource(RenderTarget);
 	NewEntry.PreviewActor = PreviewActor;
 	NewEntry.EquippedWeaponClass = LoadedWeaponClass;
+	NewEntry.Metrics = PreviewMetrics;
 	NewEntry.LastAccessSerial = ++PreviewAccessSerial;
 	PreviewCache.Add(PreviewIconKey, NewEntry);
 	TrimPreviewCache();
@@ -189,6 +191,53 @@ FVector2D UBG_WeaponIconCaptureComponent::GetPreviewRenderTargetSize() const
 	return FVector2D(
 		static_cast<float>(GetClampedRenderTargetWidth()),
 		static_cast<float>(GetClampedRenderTargetHeight()));
+}
+
+FVector2D UBG_WeaponIconCaptureComponent::GetPreviewReferenceOrthoSize() const
+{
+	const float RenderTargetAspectRatio =
+		static_cast<float>(GetClampedRenderTargetWidth()) / static_cast<float>(GetClampedRenderTargetHeight());
+	if (RenderTargetAspectRatio <= KINDA_SMALL_NUMBER)
+	{
+		LOGE(TEXT("%s: GetPreviewReferenceOrthoSize failed because render target aspect ratio was invalid."),
+			*GetNameSafe(this));
+		return FVector2D(FMath::Max(1.f, DefaultOrthoWidth), FMath::Max(1.f, DefaultOrthoWidth));
+	}
+
+	const float ReferenceOrthoWidth = FMath::Max(1.f, DefaultOrthoWidth);
+	return FVector2D(ReferenceOrthoWidth, ReferenceOrthoWidth / RenderTargetAspectRatio);
+}
+
+bool UBG_WeaponIconCaptureComponent::GetPreviewCaptureMetrics(
+	FName PreviewIconKey,
+	FBGWeaponIconPreviewMetrics& OutMetrics) const
+{
+	OutMetrics = FBGWeaponIconPreviewMetrics();
+	if (PreviewIconKey.IsNone())
+	{
+		LOGE(TEXT("%s: GetPreviewCaptureMetrics failed because PreviewIconKey was none."), *GetNameSafe(this));
+		return false;
+	}
+
+	const FBGWeaponIconPreviewCacheEntry* CacheEntry = PreviewCache.Find(PreviewIconKey);
+	if (!CacheEntry)
+	{
+		LOGE(TEXT("%s: GetPreviewCaptureMetrics failed because PreviewIconKey %s was not cached."),
+			*GetNameSafe(this),
+			*PreviewIconKey.ToString());
+		return false;
+	}
+
+	if (!CacheEntry->Metrics.IsValid())
+	{
+		LOGE(TEXT("%s: GetPreviewCaptureMetrics failed because cached metrics were invalid for PreviewIconKey %s."),
+			*GetNameSafe(this),
+			*PreviewIconKey.ToString());
+		return false;
+	}
+
+	OutMetrics = CacheEntry->Metrics;
+	return true;
 }
 
 void UBG_WeaponIconCaptureComponent::InvalidateWeaponPreview(FName PreviewIconKey)
@@ -673,8 +722,11 @@ ABG_EquippedWeaponBase* UBG_WeaponIconCaptureComponent::SpawnPreviewActor(
 
 bool UBG_WeaponIconCaptureComponent::CapturePreviewActor(
 	ABG_EquippedWeaponBase* PreviewActor,
-	UTextureRenderTarget2D* RenderTarget)
+	UTextureRenderTarget2D* RenderTarget,
+	FBGWeaponIconPreviewMetrics& OutMetrics)
 {
+	OutMetrics = FBGWeaponIconPreviewMetrics();
+
 	if (!IsValid(PreviewActor))
 	{
 		LOGE(TEXT("%s: CapturePreviewActor failed because PreviewActor was invalid."), *GetNameSafe(this));
@@ -728,10 +780,22 @@ bool UBG_WeaponIconCaptureComponent::CapturePreviewActor(
 
 	SceneCaptureComponent->TextureTarget = RenderTarget;
 	ConfigureSceneCaptureSource();
-	ConfigureCaptureCameraForBounds(PreviewBounds);
+	float CaptureOrthoWidth = 0.f;
+	if (!ConfigureCaptureCameraForBounds(PreviewBounds, CaptureOrthoWidth))
+		return false;
+
 	SceneCaptureComponent->ProjectionType = ECameraProjectionMode::Orthographic;
 	SceneCaptureComponent->bCaptureEveryFrame = false;
 	SceneCaptureComponent->bCaptureOnMovement = false;
+	OutMetrics = BuildPreviewMetrics(CaptureOrthoWidth, RenderTarget);
+	if (!OutMetrics.IsValid())
+	{
+		LOGE(TEXT("%s: CapturePreviewActor failed because preview metrics were invalid for %s."),
+			*GetNameSafe(this),
+			*GetNameSafe(PreviewActor));
+		return false;
+	}
+
 	SceneCaptureComponent->CaptureScene();
 
 	return true;
@@ -805,29 +869,78 @@ float UBG_WeaponIconCaptureComponent::CalculateOrthoWidthForBounds(const FBox& P
 	return FMath::Max(1.f, RequiredWidth * FMath::Max(1.f, OrthoWidthPadding));
 }
 
-void UBG_WeaponIconCaptureComponent::ConfigureCaptureCameraForBounds(const FBox& PreviewBounds)
+bool UBG_WeaponIconCaptureComponent::ConfigureCaptureCameraForBounds(
+	const FBox& PreviewBounds,
+	float& OutOrthoWidth)
 {
+	OutOrthoWidth = 0.f;
+
 	if (!CaptureRigActor)
 	{
 		LOGE(TEXT("%s: ConfigureCaptureCameraForBounds failed because CaptureRigActor was null."), *GetNameSafe(this));
-		return;
+		return false;
 	}
 
 	if (!SceneCaptureComponent)
 	{
 		LOGE(TEXT("%s: ConfigureCaptureCameraForBounds failed because SceneCaptureComponent was null."),
 			*GetNameSafe(this));
-		return;
+		return false;
 	}
 
 	const FVector BoundsCenter = PreviewBounds.GetCenter();
 	const FVector BoundsExtent = PreviewBounds.GetExtent();
 	const float ResolvedCaptureDistance = FMath::Max(CaptureDistance, BoundsExtent.Y + 50.f);
+	OutOrthoWidth = CalculateOrthoWidthForBounds(PreviewBounds);
+	if (OutOrthoWidth <= KINDA_SMALL_NUMBER)
+	{
+		LOGE(TEXT("%s: ConfigureCaptureCameraForBounds failed because calculated OrthoWidth was invalid."),
+			*GetNameSafe(this));
+		return false;
+	}
 
 	CaptureRigActor->SetActorLocation(BoundsCenter);
 	SceneCaptureComponent->SetRelativeLocation(SideViewCaptureRelativeLocation * ResolvedCaptureDistance);
 	SceneCaptureComponent->SetRelativeRotation(SideViewCaptureRotation);
-	SceneCaptureComponent->OrthoWidth = CalculateOrthoWidthForBounds(PreviewBounds);
+	SceneCaptureComponent->OrthoWidth = OutOrthoWidth;
+	return true;
+}
+
+FBGWeaponIconPreviewMetrics UBG_WeaponIconCaptureComponent::BuildPreviewMetrics(
+	float OrthoWidth,
+	const UTextureRenderTarget2D* RenderTarget) const
+{
+	FBGWeaponIconPreviewMetrics Metrics;
+
+	if (!RenderTarget)
+	{
+		LOGE(TEXT("%s: BuildPreviewMetrics failed because RenderTarget was null."), *GetNameSafe(this));
+		return Metrics;
+	}
+
+	const FVector2D RenderTargetSize(
+		static_cast<float>(RenderTarget->SizeX),
+		static_cast<float>(RenderTarget->SizeY));
+	if (RenderTargetSize.X <= KINDA_SMALL_NUMBER || RenderTargetSize.Y <= KINDA_SMALL_NUMBER)
+	{
+		LOGE(TEXT("%s: BuildPreviewMetrics failed because render target size was invalid. Size=%s"),
+			*GetNameSafe(this),
+			*RenderTargetSize.ToString());
+		return Metrics;
+	}
+
+	const float RenderTargetAspectRatio = RenderTargetSize.X / RenderTargetSize.Y;
+	if (RenderTargetAspectRatio <= KINDA_SMALL_NUMBER)
+	{
+		LOGE(TEXT("%s: BuildPreviewMetrics failed because render target aspect ratio was invalid."),
+			*GetNameSafe(this));
+		return Metrics;
+	}
+
+	Metrics.RenderTargetSize = RenderTargetSize;
+	Metrics.OrthoWidth = FMath::Max(0.f, OrthoWidth);
+	Metrics.OrthoHeight = Metrics.OrthoWidth / RenderTargetAspectRatio;
+	return Metrics;
 }
 
 void UBG_WeaponIconCaptureComponent::DestroyPreviewEntry(FBGWeaponIconPreviewCacheEntry& Entry)
@@ -842,6 +955,7 @@ void UBG_WeaponIconCaptureComponent::DestroyPreviewEntry(FBGWeaponIconPreviewCac
 	ReleaseRenderTarget(Entry.RenderTarget);
 	Entry.RenderTarget = nullptr;
 	Entry.EquippedWeaponClass = nullptr;
+	Entry.Metrics = FBGWeaponIconPreviewMetrics();
 	Entry.LastAccessSerial = 0;
 }
 

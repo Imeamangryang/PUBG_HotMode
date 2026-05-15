@@ -9,6 +9,7 @@
 #include "BG_EquipmentComponent.generated.h"
 
 class ABG_Character;
+class ABG_EquippedItemBase;
 class ABG_EquippedWeaponBase;
 class ABG_WorldItemBase;
 class UBG_InventoryComponent;
@@ -295,6 +296,10 @@ private: // --- State Mutation ---
 	void SetLoadedAmmo(EBG_EquipmentSlot WeaponSlot, int32 LoadedAmmo);
 	void SetArmorDurability(EBG_EquipmentSlot ArmorSlot, float Durability);
 	void SetEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot, ABG_EquippedWeaponBase* WeaponActor);
+	void RefreshBackpackVisual();
+	TSubclassOf<ABG_EquippedItemBase> ResolveBackpackEquippedItemClass(
+		const FBG_BackpackItemDataRow& BackpackRow,
+		const TCHAR* OperationName) const;
 
 	/// Active slot validity normalization
 	void NormalizeActiveWeaponSlot();

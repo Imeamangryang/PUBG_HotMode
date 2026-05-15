@@ -1,7 +1,7 @@
 ﻿#include "Combat/BG_HealthComponent.h"
-
 #include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/BG_GameState.h"
 
 UBG_HealthComponent::UBG_HealthComponent()
 {
@@ -68,6 +68,28 @@ bool UBG_HealthComponent::ApplyDamage(float DamageAmount)
 {
 	if (!CanMutateHealthState(TEXT("ApplyDamage")))
 	{
+		return false;
+	}
+	
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: ApplyDamage failed because World was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	const ABG_GameState* BGGameState = World->GetGameState<ABG_GameState>();
+	if (!BGGameState)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: ApplyDamage failed because BG_GameState was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	if (BGGameState->GetMatchState() != EBG_MatchState::Combat)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s: ApplyDamage blocked because MatchState was not Combat. CurrentState=%s"),
+			*GetNameSafe(this),
+			*StaticEnum<EBG_MatchState>()->GetNameStringByValue(static_cast<int64>(BGGameState->GetMatchState())));
 		return false;
 	}
 
@@ -139,6 +161,22 @@ bool UBG_HealthComponent::ApplyHeal(float HealAmount, float HealCap)
 	}
 
 	ApplyHealthSnapshot(NewHP, false);
+	return true;
+}
+
+bool UBG_HealthComponent::SetHealthPercent(float NewHealthPercent)
+{
+	if (!CanMutateHealthState(TEXT("SetHealthPercent")))
+		return false;
+
+	if (!FMath::IsFinite(NewHealthPercent) || NewHealthPercent < 0.f || NewHealthPercent > 1.f)
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: SetHealthPercent failed because NewHealthPercent %.2f was outside 0.0 to 1.0."), *GetNameSafe(this), NewHealthPercent);
+		return false;
+	}
+
+	const float NewHealth = MaxHP * NewHealthPercent;
+	ApplyHealthSnapshot(NewHealth, NewHealth <= 0.f);
 	return true;
 }
 

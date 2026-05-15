@@ -61,17 +61,6 @@ void UBG_ItemUseComponent::TickComponent(
 		return;
 	}
 
-	const AActor* Owner = GetOwner();
-	if (Owner && Owner->HasAuthority() && CachedCharacter && MovementCancelSpeedThreshold > 0.f)
-	{
-		const float MovementCancelSpeedSq = FMath::Square(MovementCancelSpeedThreshold);
-		if (CachedCharacter->GetVelocity().SizeSquared2D() > MovementCancelSpeedSq)
-		{
-			CancelActiveItemUse(TEXT("movement"));
-			return;
-		}
-	}
-
 	BroadcastItemUseProgress();
 }
 
@@ -131,17 +120,7 @@ void UBG_ItemUseComponent::CancelItemUse()
 
 void UBG_ItemUseComponent::NotifyMovementInput()
 {
-	const AActor* Owner = GetOwner();
-	if (Owner && Owner->HasAuthority())
-	{
-		CancelActiveItemUse(TEXT("movement input"));
-		return;
-	}
-
-	if (ItemUseState.bIsUsingItem)
-	{
-		Server_CancelItemUse();
-	}
+	// Movement is allowed during item use; ABG_Character applies the speed penalty.
 }
 
 void UBG_ItemUseComponent::NotifyFireInput()
@@ -233,6 +212,7 @@ void UBG_ItemUseComponent::Server_CancelItemUse_Implementation()
 void UBG_ItemUseComponent::OnRep_ItemUseState()
 {
 	RefreshProgressTickEnabled();
+	RefreshOwnerMovementSpeed();
 	BroadcastItemUseStateChanged();
 	BroadcastItemUseProgress();
 }
@@ -810,6 +790,7 @@ void UBG_ItemUseComponent::SetItemUseState(
 	ItemUseState.UseStartServerTime = GetServerWorldTimeSeconds();
 
 	RefreshProgressTickEnabled();
+	RefreshOwnerMovementSpeed();
 	BroadcastItemUseStateChanged();
 	BroadcastItemUseProgress();
 
@@ -823,6 +804,7 @@ void UBG_ItemUseComponent::ResetItemUseState()
 {
 	ItemUseState = FBG_ItemUseRepState();
 	RefreshProgressTickEnabled();
+	RefreshOwnerMovementSpeed();
 	BroadcastItemUseStateChanged();
 	BroadcastItemUseProgress();
 
@@ -849,6 +831,22 @@ void UBG_ItemUseComponent::ClearItemUseTimer()
 void UBG_ItemUseComponent::RefreshProgressTickEnabled()
 {
 	SetComponentTickEnabled(ItemUseState.bIsUsingItem);
+}
+
+void UBG_ItemUseComponent::RefreshOwnerMovementSpeed()
+{
+	if (!CachedCharacter)
+	{
+		CacheOwnerComponents();
+	}
+
+	if (!CachedCharacter)
+	{
+		LOGE(TEXT("%s: RefreshOwnerMovementSpeed failed because CachedCharacter was null."), *GetNameSafe(this));
+		return;
+	}
+
+	CachedCharacter->RefreshMovementSpeed();
 }
 
 void UBG_ItemUseComponent::NotifyItemUseFailure(

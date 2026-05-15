@@ -8,6 +8,9 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Inventory/BG_EquipmentComponent.h"
+#include "Inventory/BG_EquippedItemBase.h"
 #include "Inventory/BG_InventoryComponent.h"
 #include "Inventory/BG_InventoryTypes.h"
 #include "Inventory/BG_ItemDataRegistrySubsystem.h"
@@ -78,7 +81,8 @@ namespace BG::Tests
 		TObjectPtr<ABG_Character> Character = nullptr;
 		TObjectPtr<UBG_InventoryComponent> InventoryComponent = nullptr;
 
-		bool Initialize(FAutomationTestBase& Test)
+		bool Initialize(FAutomationTestBase& Test,
+		                TSubclassOf<ABG_Character> CharacterClass = ABG_Character::StaticClass())
 		{
 			if (!WorldWrapper.CreateTestWorld(EWorldType::Game))
 			{
@@ -111,8 +115,12 @@ namespace BG::Tests
 			FActorSpawnParameters SpawnParameters;
 			SpawnParameters.SpawnCollisionHandlingOverride =
 				ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			Test.TestNotNull(TEXT("Character class is valid."), CharacterClass.Get());
+			if (!CharacterClass)
+				return false;
+
 			Character = World->SpawnActor<ABG_Character>(
-				ABG_Character::StaticClass(), FTransform::Identity, SpawnParameters);
+				CharacterClass, FTransform::Identity, SpawnParameters);
 			Test.TestNotNull(TEXT("Character is spawned."), Character.Get());
 			if (!Character)
 				return false;
@@ -122,6 +130,73 @@ namespace BG::Tests
 			return InventoryComponent != nullptr;
 		}
 	};
+
+	bool TrySetBackpackSocketName(
+		FAutomationTestBase& Test,
+		ABG_Character* Character,
+		const FName SocketName)
+	{
+		Test.TestNotNull(TEXT("Character is valid for backpack socket setup."), Character);
+		if (!Character)
+			return false;
+
+		if (FNameProperty* NameProperty =
+			FindFProperty<FNameProperty>(ABG_Character::StaticClass(), TEXT("BackpackSocketName")))
+		{
+			NameProperty->SetPropertyValue_InContainer(Character, SocketName);
+			return true;
+		}
+
+		Test.AddError(TEXT("BackpackSocketName property was not found."));
+		return false;
+	}
+
+	bool TryGetBackpackSocketName(
+		FAutomationTestBase& Test,
+		const ABG_Character* Character,
+		FName& OutSocketName)
+	{
+		OutSocketName = NAME_None;
+		Test.TestNotNull(TEXT("Character is valid for backpack socket read."), Character);
+		if (!Character)
+			return false;
+
+		if (FNameProperty* NameProperty =
+			FindFProperty<FNameProperty>(ABG_Character::StaticClass(), TEXT("BackpackSocketName")))
+		{
+			OutSocketName = NameProperty->GetPropertyValue_InContainer(Character);
+			return true;
+		}
+
+		Test.AddError(TEXT("BackpackSocketName property was not found."));
+		return false;
+	}
+
+	bool TrySelectBackpackSocketName(
+		FAutomationTestBase& Test,
+		ABG_Character* Character,
+		FName& OutSocketName)
+	{
+		OutSocketName = NAME_None;
+		USkeletalMeshComponent* BodyMesh = Character ? Character->GetBodyAnimationMesh() : nullptr;
+		Test.TestNotNull(TEXT("Character has a body skeletal mesh for backpack socket attachment."), BodyMesh);
+		if (!BodyMesh)
+			return false;
+
+		if (!TryGetBackpackSocketName(Test, Character, OutSocketName))
+			return false;
+
+		if (!OutSocketName.IsNone() && BodyMesh->DoesSocketExist(OutSocketName))
+			return true;
+
+		const TArray<FName> SocketNames = BodyMesh->GetAllSocketNames();
+		Test.TestTrue(TEXT("Body skeletal mesh exposes at least one socket."), SocketNames.Num() > 0);
+		if (SocketNames.Num() <= 0)
+			return false;
+
+		OutSocketName = SocketNames[0];
+		return TrySetBackpackSocketName(Test, Character, OutSocketName);
+	}
 
 	bool TryRequestAmmoTag(FAutomationTestBase& Test, const TCHAR* TagName, FGameplayTag& OutTag)
 	{
@@ -391,6 +466,81 @@ bool FBGInventoryCharacterGiveItemRejectsInvalidRequestsTest::RunTest(const FStr
 	TestEqual(TEXT("Equipment type rejection reports no added quantity."), AddedQuantity, 0);
 	TestEqual(TEXT("Rejected give requests do not mutate equipment item quantity."),
 	          Fixture.InventoryComponent->GetQuantity(EBG_ItemType::Weapon, WeaponTag), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FBGBackpackEquipIncreasesCapacityAndAttachesEquippedItemBaseTest,
+	"PUBG_HotMode.GEONU.Inventory.Backpack.EquipIncreasesCapacityAndAttachesEquippedItemBase",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FBGBackpackEquipIncreasesCapacityAndAttachesEquippedItemBaseTest::RunTest(const FString& Parameters)
+{
+	FGameplayTag BackpackTag;
+	if (!BG::Tests::TryRequestInventoryTag(*this, TEXT("Item.Equipment.Backpack.Lv1"), BackpackTag))
+		return false;
+
+	UClass* CharacterClass = StaticLoadClass(
+		ABG_Character::StaticClass(),
+		nullptr,
+		TEXT("/Game/WON/BluePrints/BP_BG_Character_WON.BP_BG_Character_WON_C"));
+	TestNotNull(TEXT("Backpack attachment test loads the project character blueprint."), CharacterClass);
+	if (!CharacterClass)
+		return false;
+
+	BG::Tests::FCharacterInventoryTestFixture Fixture;
+	if (!Fixture.Initialize(*this, CharacterClass))
+		return false;
+
+	UBG_EquipmentComponent* EquipmentComponent = Fixture.Character->GetEquipmentComponent();
+	TestNotNull(TEXT("Character has equipment component."), EquipmentComponent);
+	if (!EquipmentComponent)
+		return false;
+
+	FName BackpackSocketName;
+	if (!BG::Tests::TrySelectBackpackSocketName(*this, Fixture.Character.Get(), BackpackSocketName))
+		return false;
+
+	USkeletalMeshComponent* BodyMesh = Fixture.Character->GetBodyAnimationMesh();
+	TestNotNull(TEXT("Character has body mesh for backpack socket attachment."), BodyMesh);
+	if (!BodyMesh)
+		return false;
+
+	const float BaseMaxWeight = Fixture.InventoryComponent->GetBaseMaxWeight();
+
+	FGameplayTag ReplacedBackpackTag;
+	TestTrue(TEXT("Backpack equips through equipment component."),
+	         EquipmentComponent->Auth_EquipBackpack(BackpackTag, ReplacedBackpackTag));
+	TestFalse(TEXT("First backpack equip has no replacement."), ReplacedBackpackTag.IsValid());
+	TestEqual(TEXT("Backpack Lv1 adds weight bonus."),
+	          Fixture.InventoryComponent->GetMaxWeight(), BaseMaxWeight + 50.f);
+
+	ABG_EquippedItemBase* BackpackVisualActor = Fixture.Character->GetBackpackVisualActor();
+	TestNotNull(TEXT("Equipped backpack creates an equipped item visual actor."), BackpackVisualActor);
+	if (!BackpackVisualActor)
+		return false;
+
+	TestEqual(TEXT("Backpack visual actor keeps backpack item type."),
+	          BackpackVisualActor->GetItemType(), EBG_ItemType::Backpack);
+	TestEqual(TEXT("Backpack visual actor keeps backpack item tag."),
+	          BackpackVisualActor->GetItemTag(), BackpackTag);
+	TestFalse(TEXT("Backpack visual actor is visible in game."),
+	          BackpackVisualActor->IsHidden());
+	TestTrue(TEXT("Backpack socket exists on the body skeletal mesh."),
+	         BodyMesh->DoesSocketExist(BackpackSocketName));
+	TestTrue(TEXT("Backpack visual actor is attached to the body skeletal mesh."),
+	         BackpackVisualActor->GetRootComponent()->GetAttachParent() == BodyMesh);
+	TestEqual(TEXT("Backpack visual actor uses the configured body socket."),
+	          BackpackVisualActor->GetRootComponent()->GetAttachSocketName(), BackpackSocketName);
+
+	FGameplayTag RemovedBackpackTag;
+	TestTrue(TEXT("Backpack unequips through equipment component."),
+	         EquipmentComponent->Auth_UnequipBackpack(RemovedBackpackTag));
+	TestEqual(TEXT("Unequip returns the backpack item tag."), RemovedBackpackTag, BackpackTag);
+	TestEqual(TEXT("Unequip restores base carry capacity."),
+	          Fixture.InventoryComponent->GetMaxWeight(), BaseMaxWeight);
+	TestNull(TEXT("Unequip clears the backpack visual actor."),
+	         Fixture.Character->GetBackpackVisualActor());
 	return true;
 }
 

@@ -18,18 +18,24 @@ public:
 
 	UFUNCTION(BlueprintNativeEvent, Category = "Spectator")
 	void HandlePlayerDeath(AController* VictimController, APlayerState* VictimPlayerState, APawn* VictimPawn);
+	
+	UFUNCTION(BlueprintCallable, Category = "Spectator")
+	APawn* FindInitialSpectateTarget(AController* RequestingController) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Spectator")
+	APawn* FindNextSpectateTarget(AController* RequestingController, APawn* CurrentSpectateTarget) const;
 
 protected:
 	void SpawnAndPossessPlayer(APlayerController* NewPlayer);
 	void StartPreparationPhase();
 	void TickPreparationPhase();
+	void UpdateSpectatorsForDeadTarget(APawn* DeadTargetPawn);
 	
 	void EvaluateMatchEnd();
 	int32 GetAlivePlayerCount() const;
 	AController* GetLastAlivePlayerController() const;
 	void EndBattleMatch(AController* WinnerController);
-
-protected:
+	
 	UPROPERTY(EditDefaultsOnly, Category = "BG|Battle")
 	int32 PreparationDuration = 30;
 

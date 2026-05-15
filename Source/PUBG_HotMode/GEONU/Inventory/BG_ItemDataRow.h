@@ -10,6 +10,7 @@
 #include "BG_ItemDataRow.generated.h"
 
 class ABG_WorldItemBase;
+class ABG_EquippedItemBase;
 class ABG_EquippedWeaponBase;
 
 USTRUCT(BlueprintType)
@@ -127,22 +128,6 @@ struct PUBG_HOTMODE_API FBG_WeaponItemDataRow : public FBG_ItemDataRow
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon", meta=(ClampMin="0"))
 	int32 MagazineSize = 0;
 
-	/// Reload time before confirming ammo consumption and reload
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon", meta=(ClampMin="0.0"))
-	float ReloadDuration = 0.f;
-
-	/// Faster reload duration when the magazine is not empty
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon", meta=(ClampMin="0.0"))
-	float TacticalReloadDuration = 0.f;
-
-	/// Initial duration for single-bullet reload weapons
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon", meta=(ClampMin="0.0"))
-	float SingleBulletInitialReloadDuration = 0.f;
-
-	/// Repeat duration per bullet after the initial single-bullet reload step
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon", meta=(ClampMin="0.0"))
-	float SingleBulletRepeatReloadDuration = 0.f;
-
 	/// Equipped actor Blueprint attached to the character
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon")
 	TSoftClassPtr<ABG_EquippedWeaponBase> EquippedWeaponClass;
@@ -152,6 +137,10 @@ USTRUCT(BlueprintType)
 struct PUBG_HOTMODE_API FBG_BackpackItemDataRow : public FBG_ItemDataRow
 {
 	GENERATED_BODY()
+
+	/// Equipped actor Blueprint attached to the character while the backpack is worn
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Backpack")
+	TSoftClassPtr<ABG_EquippedItemBase> EquippedItemClass;
 
 	/// Backpack tier
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Backpack", meta=(ClampMin="0"))

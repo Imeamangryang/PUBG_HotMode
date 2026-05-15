@@ -4,6 +4,7 @@
 #include "Components/TextBlock.h"
 #include "Internationalization/Regex.h"
 #include "GameFramework/BG_GameInstance.h"
+#include "GameFramework/PlayerController.h"
 
 void UNickNameWidget::NativeConstruct()
 {
@@ -17,6 +18,16 @@ void UNickNameWidget::NativeConstruct()
 	if (ErrorText)
 	{
 		ErrorText->SetText(FText::GetEmpty());
+	}
+
+	if (APlayerController* OwningPlayer = GetOwningPlayer())
+	{
+		FInputModeUIOnly InputMode;
+		InputMode.SetWidgetToFocus(TakeWidget());
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+
+		OwningPlayer->SetInputMode(InputMode);
+		OwningPlayer->bShowMouseCursor = true;
 	}
 }
 
@@ -36,9 +47,19 @@ void UNickNameWidget::OnClickedConfirmButton()
 			ErrorText->SetText(FText::FromString(TEXT("사용 가능한 닉네임입니다.")));
 		}
 
-		// TODO:
-		// 여기서 닉네임 저장 또는 서버 전송 처리
 		UBG_GameInstance* BGGameInstance = Cast<UBG_GameInstance>(GetGameInstance());
+		if (!BGGameInstance)
+		{
+			return;
+		}
+
+		if (APlayerController* OwningPlayer = GetOwningPlayer())
+		{
+			FInputModeGameOnly InputMode;
+			OwningPlayer->SetInputMode(InputMode);
+			OwningPlayer->bShowMouseCursor = false;
+		}
+
 		BGGameInstance->SetPendingPlayerNickName(NickName);
 		BGGameInstance->ConnectToDedicatedServer();
 	}
@@ -46,9 +67,7 @@ void UNickNameWidget::OnClickedConfirmButton()
 	{
 		if (ErrorText)
 		{
-			ErrorText->SetText(
-				FText::FromString(TEXT("사용 불가능한 닉네임입니다."))
-			);
+			ErrorText->SetText(FText::FromString(TEXT("사용 불가능한 닉네임입니다.")));
 		}
 	}
 }

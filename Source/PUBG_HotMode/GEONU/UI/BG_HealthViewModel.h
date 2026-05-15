@@ -4,9 +4,60 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "GameplayTagContainer.h"
+#include "Inventory/BG_EquipmentComponent.h"
+#include "Inventory/BG_ItemTypes.h"
 #include "BG_HealthViewModel.generated.h"
 
 // ── Shared delegate types ──────────────────────────────────────────────────
+
+USTRUCT(BlueprintType)
+struct PUBG_HOTMODE_API FBGActiveWeaponAmmoRenderData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Ammo")
+	bool bHasActiveGun = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Ammo")
+	EBG_EquipmentSlot ActiveWeaponSlot = EBG_EquipmentSlot::None;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Ammo", meta=(Categories="Item.Weapon"))
+	FGameplayTag ActiveWeaponItemTag;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Ammo", meta=(Categories="Item.Ammo"))
+	FGameplayTag AmmoItemTag;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Ammo", meta=(ClampMin="0"))
+	int32 LoadedAmmo = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Ammo", meta=(ClampMin="0"))
+	int32 MagazineSize = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Ammo", meta=(ClampMin="0"))
+	int32 ReserveAmmo = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Ammo")
+	bool bUsesInfiniteDebugAmmo = false;
+};
+
+USTRUCT(BlueprintType)
+struct PUBG_HOTMODE_API FBGInventoryWeightRenderData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Inventory", meta=(ClampMin="0.0"))
+	float CurrentWeight = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Inventory", meta=(ClampMin="0.0"))
+	float MaxWeight = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Inventory", meta=(ClampMin="0.0", ClampMax="1.0"))
+	float FillPercent = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category="HUD|Inventory")
+	bool bHasCapacity = false;
+};
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FOnBGHUD_FloatBoolValueChanged, float, Value, bool, bValue);
@@ -19,6 +70,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnBGHUD_BoolValueChanged, bool, bValue);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnBGHUD_ActiveWeaponAmmoChanged, FBGActiveWeaponAmmoRenderData, AmmoData);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnBGHUD_InventoryWeightChanged, FBGInventoryWeightRenderData, WeightData);
 
 /**
  * Data bridge for widgets, providing delegates for each attribute.
@@ -69,6 +126,12 @@ public: // --- Per-attribute delegates ---
 	UPROPERTY(BlueprintAssignable, Category="HUD")
 	FOnBGHUD_FloatBoolValueChanged OnBreathChanged;
 
+	UPROPERTY(BlueprintAssignable, Category="HUD")
+	FOnBGHUD_ActiveWeaponAmmoChanged OnActiveWeaponAmmoChanged;
+
+	UPROPERTY(BlueprintAssignable, Category="HUD")
+	FOnBGHUD_InventoryWeightChanged OnInventoryWeightChanged;
+
 	UFUNCTION(BlueprintCallable, Category="HUD")
 	void ForceUpdateAllAttributes();
 
@@ -112,16 +175,47 @@ public: // --- Getters (for initial values) ---
 		bOutShouldShowBreath = bShouldShowBreath;
 	}
 
+	UFUNCTION(BlueprintPure, Category="HUD")
+	FORCEINLINE FBGActiveWeaponAmmoRenderData GetActiveWeaponAmmoData() const { return ActiveWeaponAmmoData; }
+
+	UFUNCTION(BlueprintPure, Category="HUD")
+	FORCEINLINE FBGInventoryWeightRenderData GetInventoryWeightData() const { return InventoryWeightData; }
+
 private: // --- State binding ---
-	void BindToHealthComponent(class UBG_HealthComponent* InHealthComponent);
-	void UnbindFromHealthComponent();
-	void RefreshFromHealthComponent();
+	void BindCharacter(class ABG_Character* InCharacter);
+	void Unbind();
+	void Refresh();
+	void RefreshEquipmentLevels();
+	void RefreshActiveWeaponAmmoData();
+	void RefreshInventoryWeightData();
+	void ResetActiveWeaponAmmoData();
+	FBGActiveWeaponAmmoRenderData BuildActiveWeaponAmmoData() const;
+	FBGInventoryWeightRenderData BuildInventoryWeightData() const;
+	int32 ResolveEquipmentLevel(EBG_EquipmentSlot EquipmentSlot) const;
 
 	UFUNCTION()
 	void ReceiveHealthChanged(float NewHealth, float MaxHealth, bool bNewDead);
 
 	UFUNCTION()
 	void ReceiveBoostChanged(float NewBoostGauge);
+
+	UFUNCTION()
+	void ReceiveInventoryChanged();
+
+	UFUNCTION()
+	void ReceiveInventoryItemQuantityChanged(EBG_ItemType ItemType, FGameplayTag ItemTag, int32 Quantity);
+
+	UFUNCTION()
+	void ReceiveInventoryWeightChanged(float NewCurrentWeight, float NewMaxWeight);
+
+	UFUNCTION()
+	void ReceiveEquipmentChanged();
+
+	UFUNCTION()
+	void ReceiveActiveWeaponSlotChanged(EBG_EquipmentSlot ActiveWeaponSlot);
+
+	UFUNCTION()
+	void ReceiveWeaponAmmoChanged(int32 CurrentAmmo, int32 MaxAmmo);
 
 private: // --- Cached attribute values ---
 	// Health
@@ -148,6 +242,21 @@ private: // --- Cached attribute values ---
 	float BreathPercent = 1.f;
 	bool bShouldShowBreath = false;
 
+	// Ammo
+	FBGActiveWeaponAmmoRenderData ActiveWeaponAmmoData;
+
+	// Inventory weight
+	FBGInventoryWeightRenderData InventoryWeightData;
+
 	UPROPERTY()
 	TWeakObjectPtr<class UBG_HealthComponent> BoundHealthComponent;
+
+	UPROPERTY()
+	TWeakObjectPtr<class UBG_InventoryComponent> BoundInventoryComponent;
+
+	UPROPERTY()
+	TWeakObjectPtr<class UBG_EquipmentComponent> BoundEquipmentComponent;
+
+	UPROPERTY()
+	TWeakObjectPtr<class UBG_WeaponFireComponent> BoundWeaponFireComponent;
 };

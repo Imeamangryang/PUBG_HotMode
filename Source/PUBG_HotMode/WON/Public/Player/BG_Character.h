@@ -8,8 +8,9 @@
 #include "Inventory/BG_ItemTypes.h"
 #include "Net/UnrealNetwork.h"
 #include "BG_Character.generated.h"
-
+ 
 class ABG_WorldItemBase;
+class ABG_EquippedItemBase;
 class ABG_EquippedWeaponBase;
 class USpringArmComponent;
 class UCameraComponent;
@@ -26,6 +27,7 @@ class USceneComponent;
 class UBoxComponent;
 class USphereComponent;
 class UPrimitiveComponent;
+class UStaticMeshComponent;
 class AActor;
 class UParkourComponent;
 class UCompassComponent;
@@ -81,6 +83,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode) override;
 	virtual void OnStartCrouch(float HalfHeightAdjust, float ScaledHalfHeightAdjust) override;
@@ -125,6 +128,7 @@ public:
 	void StopAimFromInput();
 	void ToggleCrouchFromInput();
 	void ToggleProneFromInput();
+	void RefreshMovementSpeed();
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetProneState(bool bNewIsProne);
@@ -287,6 +291,9 @@ public:
 	bool CanReceiveBlueZoneDamage() const { return bCanReceiveBlueZoneDamage; }
 
 	void SetCanReceiveBlueZoneDamage(bool bNewCanReceiveBlueZoneDamage);
+	
+	UFUNCTION(BlueprintPure, Category = "State|SkyDive")
+	bool IsSkyDiving() const { return bIsSkyDiving; }
 
 	// 상호작용으로 호출될 함수
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "State|Parachute")
@@ -314,6 +321,11 @@ public:
 
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_SetInfiniteAmmo(bool bNewUseInfiniteAmmo);
+
+	bool SetHealthPercent(float NewHealthPercent);
+
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_SetHealthPercent(float NewHealthPercent);
 
 	UFUNCTION(BlueprintCallable, Category = "Weapon")
 	void SetCurrentInteractableWeapon(AActor* NewInteractableWeapon);
@@ -360,6 +372,19 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Animation")
 	USkeletalMeshComponent* GetBodyAnimationMesh();
+
+	UFUNCTION(BlueprintPure, Category = "Equipment|Backpack")
+	ABG_EquippedItemBase* GetBackpackVisualActor() const { return BackpackVisualActor; }
+
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Backpack")
+	void ApplyBackpackVisual(TSubclassOf<ABG_EquippedItemBase> BackpackEquippedItemClass,
+	                         FGameplayTag BackpackItemTag);
+
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Backpack")
+	void ClearBackpackVisual();
+
+	UFUNCTION(BlueprintCallable, Category = "Equipment|Backpack")
+	void RefreshBackpackVisualAttachment();
 
 	UFUNCTION(BlueprintPure, Category = "Inventory")
 	TArray<ABG_WorldItemBase*> GetNearbyWorldItems() const;
@@ -410,6 +435,8 @@ private:
 	void StartFallingStateMonitor();
 	void StopFallingStateMonitor();
 	void EvaluateFallingState();
+	ABG_EquippedItemBase* SpawnBackpackVisualActor(TSubclassOf<ABG_EquippedItemBase> BackpackEquippedItemClass,
+	                                                FGameplayTag BackpackItemTag);
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Camera", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USpringArmComponent> CameraBoom;
@@ -446,6 +473,12 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (AllowPrivateAccess = "true"))
 	FName WeaponBackSocketName = TEXT("spine_weapon_socket");
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Equipment|Backpack", meta = (AllowPrivateAccess = "true"))
+	FName BackpackSocketName = TEXT("spine_backpack_socket");
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Equipment|Backpack", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<ABG_EquippedItemBase> BackpackVisualActor;
 	
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Collision", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UBoxComponent> HitCollisionBox;
@@ -487,6 +520,9 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Movement", meta = (AllowPrivateAccess = "true", ClampMin = "0.0"))
 	float ProneWalkSpeed = 150.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement", meta = (AllowPrivateAccess = "true", ClampMin = "0.0", ClampMax = "1.0"))
+	float ItemUseMovementSpeedMultiplier = 0.2f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Interaction", meta = (AllowPrivateAccess = "true"))
 	FName WeaponInteractableCollisionProfileName = TEXT("Weapon");

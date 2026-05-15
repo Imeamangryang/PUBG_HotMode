@@ -34,8 +34,6 @@ namespace BG::Tests
 		Row.WeaponPoseCategory = EBG_WeaponPoseCategory::Rifle;
 		Row.AmmoItemTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Item.Ammo.556")), false);
 		Row.MagazineSize = 30;
-		Row.ReloadDuration = 3.1f;
-		Row.TacticalReloadDuration = 2.4f;
 		Row.EquippedWeaponClass = ABG_EquippedWeaponBase::StaticClass();
 		return Row;
 	}

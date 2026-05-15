@@ -5,6 +5,7 @@
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/IConsoleManager.h"
+#include "Combat/BG_HealthComponent.h"
 #include "Inventory/BG_ItemDataRegistrySubsystem.h"
 #include "Inventory/BG_ItemDataRow.h"
 #include "Player/BG_Character.h"
@@ -43,6 +44,12 @@ bool TryParsePositiveIntArgument(const FString& Value, int32& OutValue)
 {
 	OutValue = 0;
 	return LexTryParseString(OutValue, *Value) && OutValue > 0;
+}
+
+bool TryParsePercentFloatArgument(const FString& Value, float& OutValue)
+{
+	OutValue = 0.f;
+	return LexTryParseString(OutValue, *Value) && FMath::IsFinite(OutValue) && OutValue >= 0.f && OutValue <= 1.f;
 }
 
 void PrintConsoleResult(UWorld* World, const FString& Message, const FColor& Color, bool bIsError)
@@ -250,6 +257,59 @@ void HandleGiveCommand(const TArray<FString>& Args, UWorld* World)
 	PrintConsoleResult(World, Message, bAccepted ? FColor::Green : FColor::Red, !bAccepted);
 }
 
+void HandleSetHealthPercentCommand(const TArray<FString>& Args, UWorld* World)
+{
+	if (Args.Num() != 1)
+	{
+		PrintConsoleResult(World, TEXT("Usage: PUBG.SetHealthPercent <percent>"), FColor::Red, true);
+		return;
+	}
+
+	float NewHealthPercent = 0.f;
+	if (!TryParsePercentFloatArgument(Args[0], NewHealthPercent))
+	{
+		PrintConsoleResult(World, TEXT("PUBG.SetHealthPercent failed because percent was invalid. Use a value from 0.0 to 1.0."), FColor::Red, true);
+		return;
+	}
+
+	ABG_Character* Character = FindConsoleTargetCharacter(World, TEXT("PUBG.SetHealthPercent"));
+	if (!Character)
+	{
+		return;
+	}
+
+	const bool bHasAuthority = Character->HasAuthority();
+	const bool bAccepted = Character->SetHealthPercent(NewHealthPercent);
+
+	FString Message;
+	if (bAccepted && bHasAuthority)
+	{
+		if (const UBG_HealthComponent* HealthComponent = Character->GetHealthComponent())
+		{
+			Message = FString::Printf(
+				TEXT("PUBG.SetHealthPercent set %.2f (%.2f/%.2f) for %s."),
+				HealthComponent->GetHealthPercent(),
+				HealthComponent->GetCurrentHP(),
+				HealthComponent->GetMaxHP(),
+				*GetNameSafe(Character));
+		}
+		else
+		{
+			Message = FString::Printf(TEXT("PUBG.SetHealthPercent set %.2f for %s."), NewHealthPercent, *GetNameSafe(Character));
+		}
+	}
+	else
+	{
+		Message = FString::Printf(
+			TEXT("PUBG.SetHealthPercent %s %.2f for %s."),
+			bAccepted ? TEXT("requested") : TEXT("failed to set"),
+			NewHealthPercent,
+			*GetNameSafe(Character));
+	}
+
+	PrintConsoleResult(World, Message, bAccepted ? FColor::Green : FColor::Red, !bAccepted);
+}
+
 void HandleInfAmmoCommand(const TArray<FString>& Args, UWorld* World)
 {
 	if (Args.Num() != 1)
@@ -291,6 +351,12 @@ FAutoConsoleCommandWithWorldAndArgs GPUBGInfAmmoCommand(
 	TEXT("PUBG.InfAmmo"),
 	TEXT("Sets bUseInfiniteDebugAmmo on the active equipped weapon. Usage: PUBG.InfAmmo <true|false>"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleInfAmmoCommand),
+	ECVF_Cheat);
+
+FAutoConsoleCommandWithWorldAndArgs GPUBGSetHealthPercentCommand(
+	TEXT("PUBG.SetHealthPercent"),
+	TEXT("Sets the target character health percent through the server-authority health path. Usage: PUBG.SetHealthPercent <percent>"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&HandleSetHealthPercentCommand),
 	ECVF_Cheat);
 }
 

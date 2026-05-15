@@ -439,6 +439,18 @@ bool UBG_ItemDataRegistry::ValidateItemRowData(
 		}
 	}
 
+	if (ExpectedItemType == EBG_ItemType::Backpack)
+	{
+		const FBG_BackpackItemDataRow& BackpackRow = static_cast<const FBG_BackpackItemDataRow&>(ItemRow);
+		if (BackpackRow.EquippedItemClass.IsNull())
+		{
+			return SetRegistryFailure(
+				OutFailureReason,
+				FString::Printf(TEXT("Backpack item row %s has no EquippedItemClass assigned."),
+				                *RowName.ToString()));
+		}
+	}
+
 	return true;
 }
 

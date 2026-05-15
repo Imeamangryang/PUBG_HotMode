@@ -3,6 +3,9 @@
 #include "Camera/CameraComponent.h"
 #include "Components/SceneComponent.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
+#include "Components/AudioComponent.h"
 
 ABG_AirplaneCameraRig::ABG_AirplaneCameraRig()
 {
@@ -51,6 +54,17 @@ void ABG_AirplaneCameraRig::Tick(float DeltaSeconds)
 	UpdateFollowTransform();
 }
 
+void ABG_AirplaneCameraRig::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (AirplaneSoundComponent)
+	{
+		AirplaneSoundComponent->Stop();
+		AirplaneSoundComponent = nullptr;
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
 void ABG_AirplaneCameraRig::Initialize(ABG_Airplane* InTargetAirplane)
 {
 	TargetAirplane = InTargetAirplane;
@@ -70,6 +84,14 @@ void ABG_AirplaneCameraRig::Initialize(ABG_Airplane* InTargetAirplane)
 	}
 
 	OrbitPivotComponent->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0.0f));
+	
+	if (!AirplaneSoundComponent)
+	{
+		if (USoundBase* BeginPlaySound = LoadObject<USoundBase>(nullptr, TEXT("/Game/WON/SFX/Airplane.Airplane")))
+		{
+			AirplaneSoundComponent = UGameplayStatics::SpawnSound2D(this, BeginPlaySound);
+		}
+	}
 }
 
 void ABG_AirplaneCameraRig::AddLookInput(const FVector2D& LookInput)

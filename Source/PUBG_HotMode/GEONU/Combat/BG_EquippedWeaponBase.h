@@ -93,7 +93,7 @@ public: // --- Gameplay Hooks ---
 	void NotifyFireTriggered(const FTransform& MuzzleTransform, int32 ShotPredictionId);
 
 	UFUNCTION(BlueprintCallable, Category="Equipped Weapon")
-	void NotifyReloadStarted(float ReloadDuration);
+	void NotifyReloadStarted();
 
 	UFUNCTION(BlueprintCallable, Category="Equipped Weapon")
 	void NotifyReloadFinished(bool bReloadSucceeded);
@@ -194,8 +194,8 @@ protected: // --- Extension Hooks ---
 	virtual void OnFireTriggered_Implementation(const FTransform& MuzzleTransform, int32 ShotPredictionId);
 
 	UFUNCTION(BlueprintNativeEvent, Category="Equipped Weapon")
-	void OnReloadStarted(float ReloadDuration);
-	virtual void OnReloadStarted_Implementation(float ReloadDuration);
+	void OnReloadStarted();
+	virtual void OnReloadStarted_Implementation();
 
 	UFUNCTION(BlueprintNativeEvent, Category="Equipped Weapon")
 	void OnReloadFinished(bool bReloadSucceeded);

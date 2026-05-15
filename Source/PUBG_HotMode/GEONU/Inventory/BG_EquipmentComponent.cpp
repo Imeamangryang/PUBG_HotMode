@@ -3,6 +3,7 @@
 #include "BG_EquipmentComponent.h"
 
 #include "BG_InventoryComponent.h"
+#include "BG_EquippedItemBase.h"
 #include "BG_ItemDataRegistrySubsystem.h"
 #include "BG_ItemDataRow.h"
 #include "BG_WorldItemBase.h"
@@ -61,6 +62,7 @@ void UBG_EquipmentComponent::BeginPlay()
 	}
 
 	ApplyActiveWeaponStateToCharacter();
+	RefreshBackpackVisual();
 }
 
 void UBG_EquipmentComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -470,6 +472,7 @@ bool UBG_EquipmentComponent::Auth_EquipBackpack(FGameplayTag BackpackItemTag,
 
 	OutReplacedBackpackItemTag = PublicState.BackpackItemTag;
 	PublicState.BackpackItemTag = BackpackItemTag;
+	RefreshBackpackVisual();
 	BroadcastEquipmentChanged();
 	ForceEquipmentNetUpdate();
 	return true;
@@ -502,6 +505,7 @@ bool UBG_EquipmentComponent::Auth_UnequipBackpack(FGameplayTag& OutRemovedBackpa
 
 	OutRemovedBackpackItemTag = PublicState.BackpackItemTag;
 	PublicState.BackpackItemTag = FGameplayTag();
+	RefreshBackpackVisual();
 	BroadcastEquipmentChanged();
 	ForceEquipmentNetUpdate();
 	return true;
@@ -832,6 +836,7 @@ float UBG_EquipmentComponent::GetArmorDurability(EBG_EquipmentSlot ArmorSlot) co
 void UBG_EquipmentComponent::OnRep_PublicState()
 {
 	RefreshEquippedWeaponAttachments();
+	RefreshBackpackVisual();
 	BroadcastEquipmentChanged();
 	BroadcastActiveWeaponSlotChanged();
 }
@@ -1191,6 +1196,81 @@ void UBG_EquipmentComponent::SetEquippedWeaponActor(EBG_EquipmentSlot WeaponSlot
 	default:
 		break;
 	}
+}
+
+void UBG_EquipmentComponent::RefreshBackpackVisual()
+{
+	if (!CachedCharacter)
+	{
+		CacheOwnerComponents();
+	}
+
+	if (!CachedCharacter)
+	{
+		LOGE(TEXT("%s: RefreshBackpackVisual failed because CachedCharacter was null."), *GetNameSafe(this));
+		return;
+	}
+
+	if (!PublicState.BackpackItemTag.IsValid())
+	{
+		CachedCharacter->ClearBackpackVisual();
+		return;
+	}
+
+	const FBG_BackpackItemDataRow* BackpackRow =
+		FindBackpackItemRow(PublicState.BackpackItemTag, TEXT("RefreshBackpackVisual"));
+	if (!BackpackRow)
+	{
+		CachedCharacter->ClearBackpackVisual();
+		return;
+	}
+
+	TSubclassOf<ABG_EquippedItemBase> BackpackEquippedItemClass =
+		ResolveBackpackEquippedItemClass(*BackpackRow, TEXT("RefreshBackpackVisual"));
+	if (!BackpackEquippedItemClass)
+	{
+		CachedCharacter->ClearBackpackVisual();
+		return;
+	}
+
+	CachedCharacter->ApplyBackpackVisual(BackpackEquippedItemClass, PublicState.BackpackItemTag);
+}
+
+TSubclassOf<ABG_EquippedItemBase> UBG_EquipmentComponent::ResolveBackpackEquippedItemClass(
+	const FBG_BackpackItemDataRow& BackpackRow,
+	const TCHAR* OperationName) const
+{
+	if (BackpackRow.EquippedItemClass.IsNull())
+	{
+		LOGE(TEXT("%s: %s failed because backpack row %s has no EquippedItemClass assigned."),
+		     *GetNameSafe(this),
+		     OperationName,
+		     *BackpackRow.ItemTag.ToString());
+		return nullptr;
+	}
+
+	UClass* BackpackEquippedItemClass = BackpackRow.EquippedItemClass.LoadSynchronous();
+	if (!BackpackEquippedItemClass)
+	{
+		LOGE(TEXT("%s: %s failed to load EquippedItemClass %s for backpack row %s."),
+		     *GetNameSafe(this),
+		     OperationName,
+		     *BackpackRow.EquippedItemClass.ToSoftObjectPath().ToString(),
+		     *BackpackRow.ItemTag.ToString());
+		return nullptr;
+	}
+
+	if (!BackpackEquippedItemClass->IsChildOf(ABG_EquippedItemBase::StaticClass()))
+	{
+		LOGE(TEXT("%s: %s rejected class %s because it is not ABG_EquippedItemBase for backpack row %s."),
+		     *GetNameSafe(this),
+		     OperationName,
+		     *GetNameSafe(BackpackEquippedItemClass),
+		     *BackpackRow.ItemTag.ToString());
+		return nullptr;
+	}
+
+	return BackpackEquippedItemClass;
 }
 
 void UBG_EquipmentComponent::NormalizeActiveWeaponSlot()

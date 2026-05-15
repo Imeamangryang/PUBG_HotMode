@@ -4,6 +4,7 @@
 #include "Combat/BG_HealthComponent.h"
 #include "Combat/BG_WeaponFireComponent.h"
 #include "Inventory/BG_EquipmentComponent.h"
+#include "Inventory/BG_EquippedItemBase.h"
 #include "Inventory/BG_InventoryComponent.h"
 #include "Inventory/BG_ItemUseComponent.h"
 #include "Inventory/BG_WorldItemBase.h"
@@ -14,9 +15,11 @@
 #include "Camera/CameraShakeBase.h"
 #include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -260,17 +263,6 @@ void ABG_Character::MoveFromInput(const FInputActionValue& Value)
 	}
 
 	const FVector2D MovementVector = Value.Get<FVector2D>();
-	if (!MovementVector.IsNearlyZero())
-	{
-		if (ItemUseComponent)
-		{
-			ItemUseComponent->NotifyMovementInput();
-		}
-		else
-		{
-			UE_LOG(LogBGCharacter, Error, TEXT("%s: MoveFromInput could not notify item use movement because ItemUseComponent was null."), *GetNameSafe(this));
-		}
-	}
 
 	if (Controller && !MovementVector.IsNearlyZero())
 	{
@@ -629,6 +621,169 @@ USkeletalMeshComponent* ABG_Character::GetBodyAnimationMesh()
 	return MeshComponent;
 }
 
+void ABG_Character::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	ClearBackpackVisual();
+	Super::EndPlay(EndPlayReason);
+}
+
+void ABG_Character::ApplyBackpackVisual(
+	TSubclassOf<ABG_EquippedItemBase> BackpackEquippedItemClass,
+	FGameplayTag BackpackItemTag)
+{
+	if (!BackpackEquippedItemClass)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: ApplyBackpackVisual failed because BackpackEquippedItemClass was null."),
+		       *GetNameSafe(this));
+		ClearBackpackVisual();
+		return;
+	}
+
+	if (!BackpackItemTag.IsValid())
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: ApplyBackpackVisual failed because BackpackItemTag was invalid."),
+		       *GetNameSafe(this));
+		ClearBackpackVisual();
+		return;
+	}
+
+	if (IsValid(BackpackVisualActor) && BackpackVisualActor->GetClass() != BackpackEquippedItemClass.Get())
+	{
+		ClearBackpackVisual();
+	}
+
+	if (!IsValid(BackpackVisualActor))
+	{
+		BackpackVisualActor = SpawnBackpackVisualActor(BackpackEquippedItemClass, BackpackItemTag);
+	}
+
+	if (!IsValid(BackpackVisualActor))
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: ApplyBackpackVisual failed because visual actor spawn failed."),
+		       *GetNameSafe(this));
+		return;
+	}
+
+	RefreshBackpackVisualAttachment();
+}
+
+void ABG_Character::ClearBackpackVisual()
+{
+	if (!BackpackVisualActor)
+	{
+		return;
+	}
+
+	BackpackVisualActor->NotifyUnequipped();
+	BackpackVisualActor->ClearOwningCharacter();
+	BackpackVisualActor->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	BackpackVisualActor->Destroy();
+	BackpackVisualActor = nullptr;
+}
+
+void ABG_Character::RefreshBackpackVisualAttachment()
+{
+	if (!IsValid(BackpackVisualActor))
+	{
+		UE_LOG(LogBGCharacter, Error,
+		       TEXT("%s: RefreshBackpackVisualAttachment failed because BackpackVisualActor was null."),
+		       *GetNameSafe(this));
+		return;
+	}
+
+	USkeletalMeshComponent* BodyMesh = GetBodyAnimationMesh();
+	if (!BodyMesh)
+	{
+		UE_LOG(LogBGCharacter, Error,
+		       TEXT("%s: RefreshBackpackVisualAttachment failed because BodyMesh was null."),
+		       *GetNameSafe(this));
+		BackpackVisualActor->SetActorHiddenInGame(true);
+		return;
+	}
+
+	if (BackpackSocketName.IsNone())
+	{
+		UE_LOG(LogBGCharacter, Error,
+		       TEXT("%s: RefreshBackpackVisualAttachment failed because BackpackSocketName was None."),
+		       *GetNameSafe(this));
+		BackpackVisualActor->SetActorHiddenInGame(true);
+		return;
+	}
+
+	if (!BodyMesh->DoesSocketExist(BackpackSocketName))
+	{
+		UE_LOG(LogBGCharacter, Error,
+		       TEXT("%s: RefreshBackpackVisualAttachment failed because socket %s does not exist on %s."),
+		       *GetNameSafe(this),
+		       *BackpackSocketName.ToString(),
+		       *GetNameSafe(BodyMesh));
+		BackpackVisualActor->SetActorHiddenInGame(true);
+		return;
+	}
+
+	const bool bAttached = BackpackVisualActor->AttachToComponent(
+		BodyMesh,
+		FAttachmentTransformRules::SnapToTargetIncludingScale,
+		BackpackSocketName);
+	if (!bAttached)
+	{
+		UE_LOG(LogBGCharacter, Error,
+		       TEXT("%s: RefreshBackpackVisualAttachment failed to attach %s to %s socket %s."),
+		       *GetNameSafe(this),
+		       *GetNameSafe(BackpackVisualActor),
+		       *GetNameSafe(BodyMesh),
+		       *BackpackSocketName.ToString());
+		BackpackVisualActor->SetActorHiddenInGame(true);
+		return;
+	}
+
+	BackpackVisualActor->DisableEquippedCollision();
+	BackpackVisualActor->SetActorHiddenInGame(false);
+}
+
+ABG_EquippedItemBase* ABG_Character::SpawnBackpackVisualActor(
+	TSubclassOf<ABG_EquippedItemBase> BackpackEquippedItemClass,
+	FGameplayTag BackpackItemTag)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: SpawnBackpackVisualActor failed because World was null."),
+		       *GetNameSafe(this));
+		return nullptr;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = this;
+	SpawnParameters.Instigator = this;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	ABG_EquippedItemBase* BackpackActor = World->SpawnActor<ABG_EquippedItemBase>(
+		BackpackEquippedItemClass,
+		FTransform::Identity,
+		SpawnParameters);
+	if (!BackpackActor)
+	{
+		UE_LOG(LogBGCharacter, Error,
+		       TEXT("%s: SpawnBackpackVisualActor failed because SpawnActor returned null for class %s."),
+		       *GetNameSafe(this),
+		       *GetNameSafe(BackpackEquippedItemClass.Get()));
+		return nullptr;
+	}
+
+	if (!BackpackActor->InitializeEquippedItem(this, EBG_ItemType::Backpack, BackpackItemTag))
+	{
+		UE_LOG(LogBGCharacter, Error,
+		       TEXT("%s: SpawnBackpackVisualActor failed because %s rejected equipped item initialization."),
+		       *GetNameSafe(this),
+		       *GetNameSafe(BackpackActor));
+		BackpackActor->Destroy();
+		return nullptr;
+	}
+
+	return BackpackActor;
+}
+
 void ABG_Character::ProcessMeleeHitDetection()
 {
 	if (!DamageSystem)
@@ -760,6 +915,9 @@ void ABG_Character::OnParachuteAction_Implementation()
 
 void ABG_Character::BeginAirplaneDrop(const FVector& DropLocation, const FVector& DropForwardVector)
 {
+	SetIsOutsideBlueZone(false);
+	SetCanReceiveBlueZoneDamage(false);
+	
 	bIsSkyDiving = true;
 	bIsParachuteOpen = false;
 	bHasParachute = true;
@@ -822,6 +980,18 @@ void ABG_Character::BeginAirplaneDrop(const FVector& DropLocation, const FVector
 void ABG_Character::OnRep_IsParachuteOpen()
 {
 	UpdateParachuteVisibility();
+	
+	if (bIsParachuteOpen)
+	{
+		if (ABG_PlayerController* BGPlayerController = Cast<ABG_PlayerController>(GetController()))
+		{
+			BGPlayerController->StopAirDropSoundAndPlayParachuteOpen();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("%s: OnRep_IsParachuteOpen failed because BG_PlayerController was null."), *GetNameSafe(this));
+		}
+	}
 }
 
 void ABG_Character::Server_BeginAirplaneDrop_Implementation(const FVector& DropLocation, const FVector& DropForwardVector)
@@ -933,6 +1103,44 @@ void ABG_Character::Server_SetInfiniteAmmo_Implementation(bool bNewUseInfiniteAm
 bool ABG_Character::Server_SetInfiniteAmmo_Validate(bool bNewUseInfiniteAmmo)
 {
 	return true;
+}
+
+bool ABG_Character::SetHealthPercent(float NewHealthPercent)
+{
+	if (!HealthComponent)
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: SetHealthPercent failed because HealthComponent was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	if (!HasAuthority())
+	{
+		Server_SetHealthPercent(NewHealthPercent);
+		return true;
+	}
+
+	if (!HealthComponent->SetHealthPercent(NewHealthPercent))
+	{
+		UE_LOG(LogBGCharacter, Error, TEXT("%s: SetHealthPercent failed for NewHealthPercent %.2f."), *GetNameSafe(this), NewHealthPercent);
+		return false;
+	}
+
+	UE_LOG(LogBGCharacter, Log, TEXT("%s: Set health percent to %.2f (%.2f/%.2f)."),
+		*GetNameSafe(this),
+		HealthComponent->GetHealthPercent(),
+		HealthComponent->GetCurrentHP(),
+		HealthComponent->GetMaxHP());
+	return true;
+}
+
+void ABG_Character::Server_SetHealthPercent_Implementation(float NewHealthPercent)
+{
+	SetHealthPercent(NewHealthPercent);
+}
+
+bool ABG_Character::Server_SetHealthPercent_Validate(float NewHealthPercent)
+{
+	return FMath::IsFinite(NewHealthPercent) && NewHealthPercent >= 0.f && NewHealthPercent <= 1.f;
 }
 
 void ABG_Character::SetCurrentInteractableWeapon(AActor* NewInteractableWeapon)
@@ -1655,8 +1863,17 @@ void ABG_Character::ApplyMovementSpeedForStance()
 		return;
 	}
 	
-	MovementComponent->MaxWalkSpeedCrouched = CrouchWalkSpeed;
-	MovementComponent->MaxWalkSpeed = bIsProne ? ProneWalkSpeed : StandingWalkSpeed;
+	const bool bIsUsingItem = ItemUseComponent && ItemUseComponent->IsUsingItem();
+	const float ItemUseMovementMultiplier = bIsUsingItem
+		                                        ? FMath::Clamp(ItemUseMovementSpeedMultiplier, 0.f, 1.f)
+		                                        : 1.f;
+	MovementComponent->MaxWalkSpeedCrouched = CrouchWalkSpeed * ItemUseMovementMultiplier;
+	MovementComponent->MaxWalkSpeed = (bIsProne ? ProneWalkSpeed : StandingWalkSpeed) * ItemUseMovementMultiplier;
+}
+
+void ABG_Character::RefreshMovementSpeed()
+{
+	ApplyMovementSpeedForStance();
 }
 
 void ABG_Character::Server_SetProneState_Implementation(bool bNewIsProne)

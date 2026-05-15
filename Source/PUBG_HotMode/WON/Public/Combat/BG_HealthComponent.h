@@ -27,6 +27,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
 	bool ApplyHeal(float HealAmount, float HealCap = -1.f);
 
+	UFUNCTION(BlueprintCallable, Category = "Combat|Health")
+	bool SetHealthPercent(float NewHealthPercent);
+
 	UFUNCTION(BlueprintCallable, Category = "Combat|Boost")
 	bool AddBoost(float BoostAmount);
 

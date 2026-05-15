@@ -13,6 +13,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Player/BG_Character.h"
+#include "Animation/AnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "TimerManager.h"
 
@@ -1056,29 +1057,24 @@ bool UBG_WeaponFireComponent::TryStartReload()
 
 	bIsHoldingFireInput = false;
 	StopAutomaticFire();
-	CachedCharacter->StartTimedCharacterState(EBGCharacterState::Reloading, WeaponRow->ReloadDuration);
-	EquippedWeapon->NotifyReloadStarted(WeaponRow->ReloadDuration);
-	Multicast_PlayReloadAnimation(CachedCharacter->GetEquippedWeaponPoseType());
-
-	if (UWorld* World = GetWorld())
+	ClearReloadCompletion();
+	CachedCharacter->StartTimedCharacterState(EBGCharacterState::Reloading, 0.f);
+	EquippedWeapon->NotifyReloadStarted();
+	const EBGWeaponPoseType ReloadPoseType = CachedCharacter->GetEquippedWeaponPoseType();
+	if (!PlayReloadAnimation(ReloadPoseType, true))
 	{
-		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
-		if (WeaponRow->ReloadDuration <= KINDA_SMALL_NUMBER)
-		{
-			CompleteReload();
-			return true;
-		}
-
-		World->GetTimerManager().SetTimer(ReloadTimerHandle, this, &UBG_WeaponFireComponent::CompleteReload, WeaponRow->ReloadDuration, false);
-		return true;
+		CancelReload();
+		return false;
 	}
 
-	UE_LOG(LogBGWeaponFire, Error, TEXT("%s: TryStartReload failed because World was null."), *GetNameSafe(this));
-	return false;
+	Multicast_PlayReloadAnimation(ReloadPoseType);
+	return true;
 }
 
 void UBG_WeaponFireComponent::CompleteReload()
 {
+	ClearReloadCompletion();
+
 	FGameplayTag WeaponItemTag;
 	const FBG_WeaponItemDataRow* WeaponRow = nullptr;
 	EBG_EquipmentSlot WeaponSlot = EBG_EquipmentSlot::None;
@@ -1165,10 +1161,8 @@ void UBG_WeaponFireComponent::CompleteReload()
 
 void UBG_WeaponFireComponent::CancelReload()
 {
-	if (UWorld* World = GetWorld())
-	{
-		World->GetTimerManager().ClearTimer(ReloadTimerHandle);
-	}
+	ClearReloadCompletion();
+	StopReloadAnimation();
 
 	if (ABG_EquippedWeaponBase* EquippedWeapon = GetActiveEquippedWeapon(TEXT("CancelReload")))
 	{
@@ -1182,7 +1176,123 @@ void UBG_WeaponFireComponent::CancelReload()
 	}
 }
 
-void UBG_WeaponFireComponent::PlayReloadAnimation(EBGWeaponPoseType WeaponPoseType)
+UAnimMontage* UBG_WeaponFireComponent::ResolveReloadMontage(EBGWeaponPoseType WeaponPoseType) const
+{
+	switch (WeaponPoseType)
+	{
+	case EBGWeaponPoseType::Pistol:
+		return PistolReloadMontage;
+	case EBGWeaponPoseType::Rifle:
+		return RifleReloadMontage;
+	case EBGWeaponPoseType::Shotgun:
+		return ShotgunReloadMontage;
+	case EBGWeaponPoseType::Sniper:
+		return SniperReloadMontage;
+	default:
+		return nullptr;
+	}
+}
+
+bool UBG_WeaponFireComponent::PlayReloadAnimation(EBGWeaponPoseType WeaponPoseType, bool bBindReloadCompletion)
+{
+	if (!CachedCharacter)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: PlayReloadAnimation failed because CachedCharacter was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	USkeletalMeshComponent* BodyMesh = CachedCharacter->GetBodyAnimationMesh();
+	if (!BodyMesh || !BodyMesh->GetAnimInstance())
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: PlayReloadAnimation failed because body mesh or anim instance was null."), *GetNameSafe(this));
+		return false;
+	}
+
+	UAnimMontage* MontageToPlay = ResolveReloadMontage(WeaponPoseType);
+	if (!MontageToPlay)
+	{
+		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: PlayReloadAnimation could not play montage because reload montage is not assigned for pose type %s."), *GetNameSafe(this), *UEnum::GetValueAsString(WeaponPoseType));
+		return false;
+	}
+
+	UAnimInstance* AnimInstance = BodyMesh->GetAnimInstance();
+	const float PlayedLength = AnimInstance->Montage_Play(MontageToPlay);
+	if (PlayedLength <= KINDA_SMALL_NUMBER)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: PlayReloadAnimation failed because montage %s could not be played."),
+			*GetNameSafe(this),
+			*GetNameSafe(MontageToPlay));
+		return false;
+	}
+
+	if (bBindReloadCompletion)
+	{
+		ActiveReloadMontage = MontageToPlay;
+
+		FOnMontageEnded MontageEndedDelegate;
+		MontageEndedDelegate.BindUObject(this, &UBG_WeaponFireComponent::HandleReloadMontageEnded);
+		AnimInstance->Montage_SetEndDelegate(MontageEndedDelegate, MontageToPlay);
+
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(ReloadCompletionTimerHandle);
+			World->GetTimerManager().SetTimer(
+				ReloadCompletionTimerHandle,
+				this,
+				&UBG_WeaponFireComponent::HandleReloadCompletionTimeout,
+				PlayedLength,
+				false);
+		}
+		else
+		{
+			UE_LOG(LogBGWeaponFire, Error, TEXT("%s: PlayReloadAnimation could not schedule reload completion fallback because World was null."), *GetNameSafe(this));
+		}
+	}
+
+	return true;
+}
+
+void UBG_WeaponFireComponent::HandleReloadMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (!ActiveReloadMontage || Montage != ActiveReloadMontage)
+	{
+		return;
+	}
+
+	if (bInterrupted)
+	{
+		CancelReload();
+		return;
+	}
+
+	CompleteReload();
+}
+
+void UBG_WeaponFireComponent::HandleReloadCompletionTimeout()
+{
+	if (!ActiveReloadMontage)
+	{
+		return;
+	}
+
+	CompleteReload();
+}
+
+void UBG_WeaponFireComponent::ClearReloadCompletion()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReloadCompletionTimerHandle);
+	}
+	else if (ActiveReloadMontage)
+	{
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: ClearReloadCompletion could not clear reload completion timer because World was null."), *GetNameSafe(this));
+	}
+
+	ActiveReloadMontage = nullptr;
+}
+
+void UBG_WeaponFireComponent::StopReloadAnimation(float BlendOutTime)
 {
 	if (!CachedCharacter)
 	{
@@ -1190,43 +1300,36 @@ void UBG_WeaponFireComponent::PlayReloadAnimation(EBGWeaponPoseType WeaponPoseTy
 	}
 
 	USkeletalMeshComponent* BodyMesh = CachedCharacter->GetBodyAnimationMesh();
-	if (!BodyMesh || !BodyMesh->GetAnimInstance())
+	if (!BodyMesh)
 	{
-		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: PlayReloadAnimation failed because body mesh or anim instance was null."), *GetNameSafe(this));
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: StopReloadAnimation failed because body mesh was null."), *GetNameSafe(this));
 		return;
 	}
 
-	UAnimMontage* MontageToPlay = nullptr;
-	switch (WeaponPoseType)
+	UAnimInstance* AnimInstance = BodyMesh->GetAnimInstance();
+	if (!AnimInstance)
 	{
-	case EBGWeaponPoseType::Pistol:
-		MontageToPlay = PistolReloadMontage;
-		break;
-	case EBGWeaponPoseType::Rifle:
-		MontageToPlay = RifleReloadMontage;
-		break;
-	case EBGWeaponPoseType::Shotgun:
-		MontageToPlay = ShotgunReloadMontage;
-		break;
-	case EBGWeaponPoseType::Sniper:
-		MontageToPlay = SniperReloadMontage;
-		break;
-	default:
-		break;
-	}
-
-	if (!MontageToPlay)
-	{
-		UE_LOG(LogBGWeaponFire, Warning, TEXT("%s: PlayReloadAnimation could not play montage because reload montage is not assigned for pose type %s."), *GetNameSafe(this), *UEnum::GetValueAsString(WeaponPoseType));
+		UE_LOG(LogBGWeaponFire, Error, TEXT("%s: StopReloadAnimation failed because anim instance was null."), *GetNameSafe(this));
 		return;
 	}
 
-	BodyMesh->GetAnimInstance()->Montage_Play(MontageToPlay);
+	for (UAnimMontage* ReloadMontage : { PistolReloadMontage.Get(), RifleReloadMontage.Get(), ShotgunReloadMontage.Get(), SniperReloadMontage.Get() })
+	{
+		if (ReloadMontage && AnimInstance->Montage_IsPlaying(ReloadMontage))
+		{
+			AnimInstance->Montage_Stop(BlendOutTime, ReloadMontage);
+		}
+	}
 }
 
 void UBG_WeaponFireComponent::Multicast_PlayReloadAnimation_Implementation(EBGWeaponPoseType WeaponPoseType)
 {
-	PlayReloadAnimation(WeaponPoseType);
+	if (GetOwner() && GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	PlayReloadAnimation(WeaponPoseType, false);
 }
 
 const FBGWeaponFireSettings* UBG_WeaponFireComponent::ResolveFireSettings(EBGWeaponPoseType WeaponPoseType) const

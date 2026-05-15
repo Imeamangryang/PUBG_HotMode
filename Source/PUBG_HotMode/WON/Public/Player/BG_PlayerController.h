@@ -13,9 +13,11 @@ class UInputMappingContext;
 class UUserWidget;
 class ABG_Airplane;
 class ABG_AirplaneCameraRig;
+class UAudioComponent;
 struct FInputActionValue;
 enum class EBG_ItemType : uint8;
 enum class EBGInventoryFailReason : uint8;
+enum class EBG_EquipmentSlot : uint8;
 struct FGameplayTag;
 
 USTRUCT(BlueprintType)
@@ -131,6 +133,9 @@ public:
 
 	void BeginAirplaneView(ABG_Airplane* InAirplane);
 	void EndAirplaneView();
+	
+	void StartAirDropSound();
+	void StopAirDropSoundAndPlayParachuteOpen();
 
 	UFUNCTION(BlueprintPure, Category = "Airplane Camera")
 	bool IsInAirplaneView() const { return AirplaneCameraRig != nullptr; }
@@ -156,10 +161,12 @@ protected:
 	void OnJumpInputCompleted();
 	void OnAttackInputStarted();
 	void OnAttackInputCompleted();
+	void OnEquipPrimaryAInputStarted();
+	void OnEquipPrimaryBInputStarted();
 	void OnEquipPistolInputStarted();
-	void OnEquipRifleInputStarted();
 	void OnUnequipWeaponInputStarted();
 	void OnUseBandageInputStarted();
+	void ActivateWeaponSlotFromInput(EBG_EquipmentSlot WeaponSlot);
 
 	// Future extension points. Bind an action asset and implement behavior when ready.
 	void OnCrouchInputStarted();
@@ -185,6 +192,24 @@ public:
 
 	UFUNCTION(BlueprintNativeEvent, Category = "Spectator")
 	void PrepareSpectatorMode(ABG_Character* DeadCharacter);
+	
+	UFUNCTION(BlueprintCallable, Category = "Spectator")
+	void RequestStartSpectating();
+
+	UFUNCTION(Server, Reliable)
+	void Server_RequestStartSpectating();
+
+	UFUNCTION(Client, Reliable)
+	void Client_StartSpectating(APawn* SpectateTargetPawn);
+
+	UFUNCTION(BlueprintPure, Category = "Spectator")
+	APawn* GetCurrentSpectateTarget() const { return CurrentSpectateTarget.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Spectator")
+	bool IsSpectatingPlayer() const { return CurrentSpectateTarget.IsValid(); }
+	
+	UFUNCTION(Client, Reliable)
+	void Client_StopSpectating();
 
 private:
 	UPROPERTY(Transient)
@@ -243,4 +268,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UUserWidget> BlueZoneOverlayWidget = nullptr;
+	
+	UPROPERTY(Transient)
+	TWeakObjectPtr<APawn> CurrentSpectateTarget;
+	
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> AirDropSoundComponent = nullptr;
 };

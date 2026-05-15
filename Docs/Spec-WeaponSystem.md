@@ -46,8 +46,8 @@ Dedicated Server 멀티플레이 환경에서 PUBG 스타일 무기, 탄약, 근
 | Inventory | `UBG_InventoryComponent`가 owner-only FastArray, stack, weight, drop 처리 | 탄약 보관 기반 구현됨 |
 | Equipment | `UBG_EquipmentComponent`가 PrimaryA/B, Pistol, Melee, Throwable, Armor, Backpack, active slot 관리 | 장비 골격 구현됨. active slot 변경용 client request/InputAction 흐름 부족 |
 | World item | `ABG_WorldItemBase`가 pickup/drop, range, registry 검증, equipment 교체 처리 | 골격 구현됨. 무기/탄약 WorldItem Blueprint authoring은 대부분 없음 |
-| Weapon fire | WON `UBG_WeaponFireComponent`가 server line trace, semi/full auto, ammo state, reload timer 처리 | 유지 대상. fire spec 하드코딩, eye view trace, reload fallback, ammo state 소유 책임을 재정의해야 함 |
-| Reload | active weapon row의 `AmmoItemTag`, `MagazineSize`, `ReloadDuration`를 읽고 Inventory ammo를 제거 | 기본 연결 있음. 단, 탄약 없음/제거 실패 시 code-only reload fallback 존재 |
+| Weapon fire | WON `UBG_WeaponFireComponent`가 server line trace, semi/full auto, ammo state, reload montage completion 처리 | 유지 대상. fire spec 하드코딩, eye view trace, ammo state 소유 책임을 재정의해야 함 |
+| Reload | active weapon row의 `AmmoItemTag`, `MagazineSize`를 읽고 reload montage 완료 시 Inventory ammo를 제거 | 기본 연결 있음. 탄약 없음/제거 실패 시 reload 취소 |
 | Input | Attack/Reload/Interact/Inventory는 InputAction으로 연결 | 무기 교체/해제는 `One`, `Two`, `Zero` raw key가 `SetWeaponState` 직접 호출 |
 | Character adapter | `UBG_EquipmentComponent::ApplyActiveWeaponStateToCharacter()`가 active weapon을 `EBGWeaponPoseType`로 반영 | 재사용 가능. 단, 임시 입력이 adapter를 우회함 |
 | Melee | 미장착 상태에서 barehand melee sweep 공격 존재 | Melee weapon item은 장착 가능하지만 active 공격/mesh/spec이 없음 |
@@ -140,10 +140,6 @@ Weapon item row 필수 필드:
 - `WeaponPoseCategory`
 - `AmmoItemTag`
 - `MagazineSize`
-- `ReloadDuration`
-- `TacticalReloadDuration`
-- `SingleBulletInitialReloadDuration`
-- `SingleBulletRepeatReloadDuration`
 - `EquippedWeaponClass`
 
 Fire spec row 필수 필드:

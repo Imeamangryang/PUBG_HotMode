@@ -198,9 +198,9 @@ void ABG_EquippedWeaponBase::NotifyFireTriggered(const FTransform& MuzzleTransfo
 	OnFireTriggered(MuzzleTransform, ShotPredictionId);
 }
 
-void ABG_EquippedWeaponBase::NotifyReloadStarted(float ReloadDuration)
+void ABG_EquippedWeaponBase::NotifyReloadStarted()
 {
-	OnReloadStarted(ReloadDuration);
+	OnReloadStarted();
 }
 
 void ABG_EquippedWeaponBase::NotifyReloadFinished(bool bReloadSucceeded)
@@ -354,7 +354,7 @@ void ABG_EquippedWeaponBase::OnFireTriggered_Implementation(const FTransform& Mu
 {
 }
 
-void ABG_EquippedWeaponBase::OnReloadStarted_Implementation(float ReloadDuration)
+void ABG_EquippedWeaponBase::OnReloadStarted_Implementation()
 {
 }
 

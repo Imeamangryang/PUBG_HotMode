@@ -29,6 +29,47 @@ namespace
 		EBG_EquipmentSlot::Vest,
 		EBG_EquipmentSlot::Backpack
 	};
+
+	bool IsCapacityFailure(EBGInventoryFailReason FailReason)
+	{
+		return FailReason == EBGInventoryFailReason::Overweight;
+	}
+
+	EBG_EquipmentSlot ResolveFailureHighlightEquipmentSlot(EBGInventoryFailReason FailReason)
+	{
+		return IsCapacityFailure(FailReason) ? EBG_EquipmentSlot::Backpack : EBG_EquipmentSlot::None;
+	}
+
+	FText BuildFailureUserMessage(EBGInventoryFailReason FailReason, EBG_ItemType ItemType)
+	{
+		switch (FailReason)
+		{
+		case EBGInventoryFailReason::InvalidItem:
+			return NSLOCTEXT("BGInventoryFailure", "InvalidItem", "오류: 아이템을 사용할 수 없습니다.");
+		case EBGInventoryFailReason::InvalidQuantity:
+			return NSLOCTEXT("BGInventoryFailure", "InvalidQuantity", "오류: 아이템 수량이 올바르지 않습니다.");
+		case EBGInventoryFailReason::TooFar:
+			return NSLOCTEXT("BGInventoryFailure", "TooFar", "아이템이 너무 멀리 있습니다.");
+		case EBGInventoryFailReason::Overweight:
+			return ItemType == EBG_ItemType::Backpack
+				       ? NSLOCTEXT("BGInventoryFailure", "BackpackCapacityRejected", "너무 많은 아이템을 가지고 있습니다.")
+				       : NSLOCTEXT("BGInventoryFailure", "InventoryCapacityExceeded", "인벤토리 용량이 부족합니다.");
+		case EBGInventoryFailReason::SlotMismatch:
+			return NSLOCTEXT("BGInventoryFailure", "SlotMismatch", "해당 위치에 장착할 수 없습니다.");
+		case EBGInventoryFailReason::MissingAmmo:
+			return NSLOCTEXT("BGInventoryFailure", "MissingAmmo", "탄약이 부족합니다.");
+		case EBGInventoryFailReason::AlreadyUsingItem:
+			return NSLOCTEXT("BGInventoryFailure", "AlreadyUsingItem", "사용중인 아이템입니다.");
+		case EBGInventoryFailReason::HealthCapReached:
+			return NSLOCTEXT("BGInventoryFailure", "HealthCapReached", "더 이상 회복할 수 없습니다.");
+		case EBGInventoryFailReason::ServerRejected:
+			return NSLOCTEXT("BGInventoryFailure", "ServerRejected", "오류: 서버가 요청을 거부했습니다.");
+		case EBGInventoryFailReason::None:
+		default:
+			return FText::GetEmpty();
+		}
+	}
+
 }
 
 // --- Lifecycle ------------
@@ -134,6 +175,7 @@ void UBG_InventoryViewModel::NotifyPossessedCharacterCleared()
 	InventoryItems.Reset();
 	EquipmentSlots.Reset();
 	NearbyWorldItems.Reset();
+	PickupPromptData = FBGPickupPromptRenderData();
 	ItemUseData = FBGItemUseRenderData();
 	CurrentWeight = 0.f;
 	MaxWeight = 0.f;
@@ -261,6 +303,24 @@ bool UBG_InventoryViewModel::SwapWeaponSlots(EBG_EquipmentSlot SourceSlot, EBG_E
 	return true;
 }
 
+bool UBG_InventoryViewModel::MoveEquippedWeaponSlot(
+	EBG_EquipmentSlot SourceSlot,
+	EBG_EquipmentSlot TargetSlot)
+{
+	const bool bIsAllowedPrimarySwap =
+		(SourceSlot == EBG_EquipmentSlot::PrimaryA && TargetSlot == EBG_EquipmentSlot::PrimaryB)
+		|| (SourceSlot == EBG_EquipmentSlot::PrimaryB && TargetSlot == EBG_EquipmentSlot::PrimaryA);
+	if (!bIsAllowedPrimarySwap)
+	{
+		LOGE(TEXT("%s: MoveEquippedWeaponSlot failed because SourceSlot=%d and TargetSlot=%d are not a PrimaryA/B swap pair."),
+			*GetNameSafe(this), static_cast<int32>(SourceSlot), static_cast<int32>(TargetSlot));
+		NotifyInventoryFailure(EBGInventoryFailReason::SlotMismatch, EBG_ItemType::Weapon, FGameplayTag());
+		return false;
+	}
+
+	return SwapWeaponSlots(SourceSlot, TargetSlot);
+}
+
 bool UBG_InventoryViewModel::SelectThrowable(FGameplayTag ThrowableItemTag)
 {
 	if (!ThrowableItemTag.IsValid())
@@ -362,6 +422,7 @@ void UBG_InventoryViewModel::RefreshAllRenderData()
 	RefreshInventoryRenderData();
 	RefreshEquipmentRenderData();
 	RefreshNearbyWorldItemRenderData();
+	RefreshPickupPromptRenderData();
 	RefreshItemUseRenderData();
 }
 
@@ -371,6 +432,7 @@ void UBG_InventoryViewModel::ForceBroadcastAll()
 	OnInventoryWeightChanged.Broadcast(CurrentWeight, MaxWeight);
 	OnEquipmentSlotsChanged.Broadcast();
 	OnNearbyWorldItemsChanged.Broadcast();
+	OnPickupPromptChanged.Broadcast(PickupPromptData);
 	OnItemUseChanged.Broadcast(ItemUseData);
 }
 
@@ -508,8 +570,10 @@ void UBG_InventoryViewModel::UnbindFromCharacter()
 void UBG_InventoryViewModel::HandleInventoryChanged()
 {
 	RefreshInventoryRenderData();
+	RefreshEquipmentRenderData();
 	OnInventoryItemsChanged.Broadcast();
 	OnInventoryWeightChanged.Broadcast(CurrentWeight, MaxWeight);
+	OnEquipmentSlotsChanged.Broadcast();
 }
 
 void UBG_InventoryViewModel::HandleInventoryWeightChanged(float NewCurrentWeight, float NewMaxWeight)
@@ -531,13 +595,17 @@ void UBG_InventoryViewModel::HandleEquipmentChanged()
 void UBG_InventoryViewModel::HandleNearbyWorldItemsChanged()
 {
 	RefreshNearbyWorldItemRenderData();
+	RefreshPickupPromptRenderData();
 	OnNearbyWorldItemsChanged.Broadcast();
+	OnPickupPromptChanged.Broadcast(PickupPromptData);
 }
 
 void UBG_InventoryViewModel::HandleNearbyWorldItemStateChanged()
 {
 	RefreshNearbyWorldItemRenderData();
+	RefreshPickupPromptRenderData();
 	OnNearbyWorldItemsChanged.Broadcast();
+	OnPickupPromptChanged.Broadcast(PickupPromptData);
 }
 
 void UBG_InventoryViewModel::HandleItemUseStateChanged(const FBG_ItemUseRepState& ItemUseState)
@@ -622,6 +690,11 @@ void UBG_InventoryViewModel::RefreshNearbyWorldItemRenderData()
 	}
 
 	RebindNearbyWorldItemStateDelegates();
+}
+
+void UBG_InventoryViewModel::RefreshPickupPromptRenderData()
+{
+	PickupPromptData = BuildPickupPromptRenderData(GetBestNearbyWorldItem());
 }
 
 void UBG_InventoryViewModel::RefreshItemUseRenderData()
@@ -711,14 +784,16 @@ FBGEquipmentSlotRenderData UBG_InventoryViewModel::BuildEquipmentSlotRenderData(
 		RenderData.bCanDrag = IsPrimaryWeaponSlot(Slot);
 		RenderData.bCanDropToGround = IsWeaponSlot(Slot);
 		RenderData.bCanSwapWithPrimarySlot = IsPrimaryWeaponSlot(Slot);
+		RenderData.LoadedAmmo = FMath::Max(0, EquipmentComponent->GetLoadedAmmo(Slot));
 
 		if (const ABG_EquippedWeaponBase* WeaponActor = EquipmentComponent->GetEquippedWeaponActor(Slot))
 		{
-			RenderData.LoadedAmmo = WeaponActor->GetLoadedAmmo();
+			RenderData.LoadedAmmo = FMath::Max(0, WeaponActor->GetLoadedAmmo());
+			RenderData.MagazineSize = FMath::Max(0, WeaponActor->GetMagazineCapacity());
 		}
 		else
 		{
-			LOGE(TEXT("%s could not read loaded ammo because slot %d has no equipped weapon actor."),
+			LOGE(TEXT("%s could not read runtime weapon ammo because slot %d has no equipped weapon actor."),
 				*GetNameSafe(this), static_cast<int32>(Slot));
 		}
 	}
@@ -750,6 +825,45 @@ FBGEquipmentSlotRenderData UBG_InventoryViewModel::BuildEquipmentSlotRenderData(
 	if (RenderData.ItemType == EBG_ItemType::Weapon)
 	{
 		const FBG_WeaponItemDataRow* WeaponRow = static_cast<const FBG_WeaponItemDataRow*>(ItemRow);
+		FGameplayTag AmmoItemTag = WeaponRow->AmmoItemTag;
+		if (const ABG_EquippedWeaponBase* WeaponActor = EquipmentComponent->GetEquippedWeaponActor(Slot))
+		{
+			if (WeaponActor->GetAmmoItemTag().IsValid())
+			{
+				AmmoItemTag = WeaponActor->GetAmmoItemTag();
+			}
+
+			if (WeaponActor->GetMagazineCapacity() > 0)
+			{
+				RenderData.MagazineSize = WeaponActor->GetMagazineCapacity();
+			}
+		}
+
+		if (RenderData.MagazineSize <= 0)
+		{
+			RenderData.MagazineSize = FMath::Max(0, WeaponRow->MagazineSize);
+		}
+
+		RenderData.LoadedAmmo = RenderData.MagazineSize > 0
+			? FMath::Clamp(RenderData.LoadedAmmo, 0, RenderData.MagazineSize)
+			: 0;
+
+		if (AmmoItemTag.IsValid() && RenderData.MagazineSize > 0)
+		{
+			const UBG_InventoryComponent* InventoryComponent = BoundInventoryComponent.Get();
+			if (InventoryComponent)
+			{
+				RenderData.ReserveAmmo = FMath::Max(
+					0,
+					InventoryComponent->GetQuantity(EBG_ItemType::Ammo, AmmoItemTag));
+			}
+			else
+			{
+				LOGE(TEXT("%s could not read reserve ammo because BoundInventoryComponent was null."),
+					*GetNameSafe(this));
+			}
+		}
+
 		if (!WeaponRow->EquippedWeaponClass.IsNull())
 		{
 			RenderData.PreviewIconKey = UBG_WeaponIconCaptureComponent::MakePreviewIconKey(
@@ -780,7 +894,13 @@ FBGEquipmentSlotRenderData UBG_InventoryViewModel::BuildEquipmentSlotRenderData(
 
 	RenderData.bHasDisplayRow = true;
 	RenderData.PreviewIconResource = ResolveEquipmentPreviewIconResource(RenderData);
-	RenderData.bHasPreviewIconBrush = BuildPreviewIconBrush(RenderData.PreviewIconResource, RenderData.PreviewIconBrush);
+	RenderData.PreviewIconDisplaySize = ResolveEquipmentPreviewIconDisplaySize(
+		RenderData,
+		RenderData.PreviewIconResource);
+	RenderData.bHasPreviewIconBrush = BuildPreviewIconBrush(
+		RenderData.PreviewIconResource,
+		RenderData.PreviewIconDisplaySize,
+		RenderData.PreviewIconBrush);
 	return RenderData;
 }
 
@@ -817,6 +937,31 @@ FBGNearbyWorldItemRenderData UBG_InventoryViewModel::BuildNearbyWorldItemRenderD
 	return RenderData;
 }
 
+FBGPickupPromptRenderData UBG_InventoryViewModel::BuildPickupPromptRenderData(
+	ABG_WorldItemBase* WorldItem) const
+{
+	FBGPickupPromptRenderData RenderData;
+
+	if (!IsValid(WorldItem))
+	{
+		return RenderData;
+	}
+
+	const EBG_ItemType ItemType = WorldItem->GetItemType();
+	const FGameplayTag ItemTag = WorldItem->GetItemTag();
+	RenderData.DisplayName = GetFallbackItemName(ItemTag);
+
+	const FBG_ItemDataRow* ItemRow = FindItemRow(
+		ItemType, ItemTag, TEXT("BuildPickupPromptRenderData"));
+	if (ItemRow && !ItemRow->DisplayName.IsEmpty())
+	{
+		RenderData.DisplayName = ItemRow->DisplayName;
+	}
+
+	RenderData.bVisible = !RenderData.DisplayName.IsEmpty();
+	return RenderData;
+}
+
 FBGInventoryFailureRenderData UBG_InventoryViewModel::BuildFailureRenderData(
 	EBGInventoryFailReason FailReason,
 	EBG_ItemType ItemType,
@@ -827,6 +972,10 @@ FBGInventoryFailureRenderData UBG_InventoryViewModel::BuildFailureRenderData(
 	RenderData.ItemType = ItemType;
 	RenderData.ItemTag = ItemTag;
 	RenderData.DisplayName = GetFallbackItemName(ItemTag);
+	RenderData.UserMessage = BuildFailureUserMessage(FailReason, ItemType);
+	RenderData.HighlightEquipmentSlot = ResolveFailureHighlightEquipmentSlot(FailReason);
+	RenderData.bIsCapacityFailure = IsCapacityFailure(FailReason);
+	RenderData.bShouldFlashBackpackIcon = RenderData.HighlightEquipmentSlot == EBG_EquipmentSlot::Backpack;
 
 	const FBG_ItemDataRow* ItemRow = FindItemRow(ItemType, ItemTag, TEXT("BuildFailureRenderData"));
 	if (!ItemRow)
@@ -900,7 +1049,68 @@ UObject* UBG_InventoryViewModel::ResolveEquipmentPreviewIconResource(
 	return WeaponIconCaptureComponent->GetOrCreateWeaponSlotIconResource(RenderData);
 }
 
-bool UBG_InventoryViewModel::BuildPreviewIconBrush(UObject* PreviewIconResource, FSlateBrush& OutBrush) const
+FVector2D UBG_InventoryViewModel::ResolveEquipmentPreviewIconDisplaySize(
+	const FBGEquipmentSlotRenderData& RenderData,
+	UObject* PreviewIconResource) const
+{
+	if (!RenderData.bEquipped || !RenderData.bUseRuntimePreviewIcon || RenderData.PreviewIconKey.IsNone())
+	{
+		return FVector2D::ZeroVector;
+	}
+
+	if (!PreviewIconResource)
+	{
+		return FVector2D::ZeroVector;
+	}
+
+	if (!Cast<UTextureRenderTarget2D>(PreviewIconResource) && !Cast<UMaterialInterface>(PreviewIconResource))
+	{
+		return FVector2D::ZeroVector;
+	}
+
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		LOGE(TEXT("%s could not resolve equipment preview icon display size because owner was null."),
+			*GetNameSafe(this));
+		return FVector2D::ZeroVector;
+	}
+
+	UBG_WeaponIconCaptureComponent* WeaponIconCaptureComponent =
+		OwnerActor->FindComponentByClass<UBG_WeaponIconCaptureComponent>();
+	if (!WeaponIconCaptureComponent)
+	{
+		LOGE(TEXT("%s could not resolve equipment preview icon display size because owner %s had no WeaponIconCaptureComponent."),
+			*GetNameSafe(this),
+			*GetNameSafe(OwnerActor));
+		return FVector2D::ZeroVector;
+	}
+
+	FBGWeaponIconPreviewMetrics PreviewMetrics;
+	if (!WeaponIconCaptureComponent->GetPreviewCaptureMetrics(RenderData.PreviewIconKey, PreviewMetrics))
+	{
+		return WeaponIconCaptureComponent->GetPreviewRenderTargetSize();
+	}
+
+	const FVector2D ReferenceOrthoSize = WeaponIconCaptureComponent->GetPreviewReferenceOrthoSize();
+	if (ReferenceOrthoSize.X <= KINDA_SMALL_NUMBER || ReferenceOrthoSize.Y <= KINDA_SMALL_NUMBER)
+	{
+		LOGE(TEXT("%s could not resolve equipment preview icon display size because reference ortho size was invalid. Size=%s"),
+			*GetNameSafe(this),
+			*ReferenceOrthoSize.ToString());
+		return WeaponIconCaptureComponent->GetPreviewRenderTargetSize();
+	}
+
+	const FVector2D BaseDisplaySize = WeaponIconCaptureComponent->GetPreviewRenderTargetSize();
+	return FVector2D(
+		FMath::Max(1.f, BaseDisplaySize.X * PreviewMetrics.OrthoWidth / ReferenceOrthoSize.X),
+		FMath::Max(1.f, BaseDisplaySize.Y * PreviewMetrics.OrthoHeight / ReferenceOrthoSize.Y));
+}
+
+bool UBG_InventoryViewModel::BuildPreviewIconBrush(
+	UObject* PreviewIconResource,
+	const FVector2D& PreviewIconDisplaySize,
+	FSlateBrush& OutBrush) const
 {
 	OutBrush = FSlateBrush();
 	if (!PreviewIconResource)
@@ -908,12 +1118,18 @@ bool UBG_InventoryViewModel::BuildPreviewIconBrush(UObject* PreviewIconResource,
 
 	OutBrush.SetResourceObject(PreviewIconResource);
 	OutBrush.DrawAs = ESlateBrushDrawType::Image;
+	const bool bHasDisplaySizeOverride =
+		PreviewIconDisplaySize.X > KINDA_SMALL_NUMBER && PreviewIconDisplaySize.Y > KINDA_SMALL_NUMBER;
 
 	if (const UTextureRenderTarget2D* RenderTarget = Cast<UTextureRenderTarget2D>(PreviewIconResource))
 	{
 		OutBrush.ImageSize = FVector2D(
 			static_cast<float>(RenderTarget->SizeX),
 			static_cast<float>(RenderTarget->SizeY));
+		if (bHasDisplaySizeOverride)
+		{
+			OutBrush.ImageSize = PreviewIconDisplaySize;
+		}
 		return true;
 	}
 
@@ -922,6 +1138,10 @@ bool UBG_InventoryViewModel::BuildPreviewIconBrush(UObject* PreviewIconResource,
 		OutBrush.ImageSize = FVector2D(
 			static_cast<float>(Texture->GetSizeX()),
 			static_cast<float>(Texture->GetSizeY()));
+		if (bHasDisplaySizeOverride)
+		{
+			OutBrush.ImageSize = PreviewIconDisplaySize;
+		}
 		return true;
 	}
 
@@ -938,6 +1158,10 @@ bool UBG_InventoryViewModel::BuildPreviewIconBrush(UObject* PreviewIconResource,
 			}
 		}
 
+		if (bHasDisplaySizeOverride)
+		{
+			OutBrush.ImageSize = PreviewIconDisplaySize;
+		}
 		return true;
 	}
 

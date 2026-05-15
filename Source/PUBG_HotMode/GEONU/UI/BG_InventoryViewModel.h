@@ -89,6 +89,9 @@ struct PUBG_HOTMODE_API FBGEquipmentSlotRenderData
 	FSlateBrush PreviewIconBrush;
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	FVector2D PreviewIconDisplaySize = FVector2D::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
 	bool bHasPreviewIconBrush = false;
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(ClampMin="0"))
@@ -174,6 +177,18 @@ struct PUBG_HOTMODE_API FBGNearbyWorldItemRenderData
 };
 
 USTRUCT(BlueprintType)
+struct PUBG_HOTMODE_API FBGPickupPromptRenderData
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	bool bVisible = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	FText DisplayName;
+};
+
+USTRUCT(BlueprintType)
 struct PUBG_HOTMODE_API FBGInventoryFailureRenderData
 {
 	GENERATED_BODY()
@@ -191,7 +206,19 @@ struct PUBG_HOTMODE_API FBGInventoryFailureRenderData
 	FText DisplayName;
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	FText UserMessage;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	EBG_EquipmentSlot HighlightEquipmentSlot = EBG_EquipmentSlot::None;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
 	bool bHasDisplayRow = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	bool bIsCapacityFailure = false;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI")
+	bool bShouldFlashBackpackIcon = false;
 };
 
 USTRUCT(BlueprintType)
@@ -242,6 +269,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnBGInventoryFailureReceived, const FBGInventoryFailureRenderData&, FailureData);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnBGPickupPromptChanged, const FBGPickupPromptRenderData&, PromptData);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FOnBGItemUseRenderDataChanged, const FBGItemUseRenderData&, ItemUseData);
 
 UCLASS(ClassGroup="UI", meta=(BlueprintSpawnableComponent))
@@ -277,6 +307,9 @@ public: // --- Commands ---
 
 	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
 	bool SwapWeaponSlots(EBG_EquipmentSlot SourceSlot, EBG_EquipmentSlot TargetSlot);
+
+	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
+	bool MoveEquippedWeaponSlot(EBG_EquipmentSlot SourceSlot, EBG_EquipmentSlot TargetSlot);
 
 	UFUNCTION(BlueprintCallable, Category="Inventory UI|Command")
 	bool SelectThrowable(FGameplayTag ThrowableItemTag);
@@ -315,6 +348,9 @@ public: // --- Render Data Getters ---
 	TArray<FBGNearbyWorldItemRenderData> GetNearbyWorldItems() const { return NearbyWorldItems; }
 
 	UFUNCTION(BlueprintPure, Category="Inventory UI")
+	FBGPickupPromptRenderData GetPickupPromptData() const { return PickupPromptData; }
+
+	UFUNCTION(BlueprintPure, Category="Inventory UI")
 	float GetCurrentWeight() const { return CurrentWeight; }
 
 	UFUNCTION(BlueprintPure, Category="Inventory UI")
@@ -338,6 +374,9 @@ public: // --- Events ---
 
 	UPROPERTY(BlueprintAssignable, Category="Inventory UI")
 	FOnBGInventoryViewModelChanged OnNearbyWorldItemsChanged;
+
+	UPROPERTY(BlueprintAssignable, Category="Inventory UI")
+	FOnBGPickupPromptChanged OnPickupPromptChanged;
 
 	UPROPERTY(BlueprintAssignable, Category="Inventory UI")
 	FOnBGInventoryFailureReceived OnInventoryFailureReceived;
@@ -375,6 +414,7 @@ private: // --- Render Data ---
 	void RefreshInventoryRenderData();
 	void RefreshEquipmentRenderData();
 	void RefreshNearbyWorldItemRenderData();
+	void RefreshPickupPromptRenderData();
 	void RefreshItemUseRenderData();
 	void RebindNearbyWorldItemStateDelegates();
 	void UnbindNearbyWorldItemStateDelegates();
@@ -383,11 +423,18 @@ private: // --- Render Data ---
 		EBG_ItemType ItemType, const FGameplayTag& ItemTag, int32 Quantity) const;
 	FBGEquipmentSlotRenderData BuildEquipmentSlotRenderData(EBG_EquipmentSlot Slot) const;
 	FBGNearbyWorldItemRenderData BuildNearbyWorldItemRenderData(ABG_WorldItemBase* WorldItem) const;
+	FBGPickupPromptRenderData BuildPickupPromptRenderData(ABG_WorldItemBase* WorldItem) const;
 	FBGInventoryFailureRenderData BuildFailureRenderData(
 		EBGInventoryFailReason FailReason, EBG_ItemType ItemType, const FGameplayTag& ItemTag) const;
 	FBGItemUseRenderData BuildItemUseRenderData() const;
 	UObject* ResolveEquipmentPreviewIconResource(const FBGEquipmentSlotRenderData& RenderData) const;
-	bool BuildPreviewIconBrush(UObject* PreviewIconResource, FSlateBrush& OutBrush) const;
+	FVector2D ResolveEquipmentPreviewIconDisplaySize(
+		const FBGEquipmentSlotRenderData& RenderData,
+		UObject* PreviewIconResource) const;
+	bool BuildPreviewIconBrush(
+		UObject* PreviewIconResource,
+		const FVector2D& PreviewIconDisplaySize,
+		FSlateBrush& OutBrush) const;
 
 	void ApplyItemDisplayData(const FBG_ItemDataRow& ItemRow, FText& OutDisplayName, FText& OutDescription,
 	                          TSoftObjectPtr<UTexture2D>& OutIcon) const;
@@ -434,6 +481,9 @@ private: // --- Cached Render Data ---
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(AllowPrivateAccess="true"))
 	TArray<FBGNearbyWorldItemRenderData> NearbyWorldItems;
+
+	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(AllowPrivateAccess="true"))
+	FBGPickupPromptRenderData PickupPromptData;
 
 	UPROPERTY(BlueprintReadOnly, Category="Inventory UI", meta=(AllowPrivateAccess="true"))
 	FBGInventoryFailureRenderData LastFailure;
